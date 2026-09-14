@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>the being · talk to the building</title>
+<style>
+  :root{--bg:#0a0c12;--panel:#141824;--line:#232838;--ink:#e6e8ef;--dim:#8b93a7;--accent:#7cc4ff}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 -apple-system,Segoe UI,Roboto,sans-serif;height:100vh;display:flex;flex-direction:column}
+  header{padding:12px 18px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:14px}
+  header h1{font-size:16px;margin:0;font-weight:600}
+  header .meta{color:var(--dim);font-size:12px}
+  header .dom{margin-left:auto;padding:3px 12px;border-radius:20px;background:#233;color:#bfe}
+  main{flex:1;display:flex;min-height:0}
+  .col{display:flex;flex-direction:column;min-height:0}
+  .chat{flex:1.2;border-right:1px solid var(--line)}
+  .side{flex:1;min-width:320px}
+  .log{flex:1;overflow:auto;padding:16px;display:flex;flex-direction:column;gap:10px}
+  .msg{max-width:80%;padding:9px 13px;border-radius:14px;white-space:pre-wrap}
+  .me{align-self:flex-end;background:#26406b}
+  .it{align-self:flex-start;background:#1c2233;border:1px solid var(--line)}
+  .it .em{color:var(--accent);font-size:12px;margin-bottom:3px;text-transform:uppercase;letter-spacing:.05em}
+  .msg.muse{background:transparent;border:0;color:#9aa2b6;font-size:13px;padding:3px 6px;max-width:88%}
+  .it .think{color:var(--dim);font-size:12px;margin-top:5px;font-style:italic}
+  .composer{display:flex;gap:8px;padding:12px;border-top:1px solid var(--line)}
+  .composer input{flex:1;background:#0e1119;border:1px solid var(--line);color:var(--ink);border-radius:10px;padding:11px 13px;font-size:15px}
+  .composer button{background:var(--accent);color:#04121f;border:0;border-radius:10px;padding:0 18px;font-weight:600;cursor:pointer}
+  .composer button:disabled{opacity:.5;cursor:default}
+  .side .pad{padding:14px 16px;border-bottom:1px solid var(--line)}
+  .bars .bar{display:flex;align-items:center;gap:8px;font-size:12px;margin:3px 0}
+  .bars .k{width:104px;color:var(--dim)} .bars .track{flex:1;height:7px;background:#232838;border-radius:5px;overflow:hidden}
+  .bars .track i{display:block;height:100%;background:linear-gradient(90deg,#3a7,#7cf);transition:width .6s}
+  .viewer{flex:1;position:relative;background:#000;min-height:220px}
+  .viewer iframe{width:100%;height:100%;border:0;display:block}
+  .viewer.look{box-shadow:inset 0 0 0 3px #ffd23f;animation:pulse 1s ease-in-out 3}
+  @keyframes pulse{50%{box-shadow:inset 0 0 0 6px #fff2}}
+  .look-note{position:absolute;top:10px;left:50%;transform:translateX(-50%);background:#ffd23f;color:#211;
+    padding:6px 14px;border-radius:20px;font-weight:600;font-size:13px;opacity:0;transition:opacity .3s;pointer-events:none}
+  .look-note.on{opacity:1}
+  .now{font-size:12px;color:var(--dim)} .now b{color:var(--ink)}
+  .status{font-size:11px;color:var(--dim)}
+</style>
+
+<header>
+  <h1>◐ the being</h1>
+  <span class="meta" id="meta">connecting…</span>
+  <span class="dom" id="dom">—</span>
+</header>
+<main>
+  <section class="col chat">
+    <div class="log" id="log"></div>
+    <div class="composer">
+      <input id="inp" placeholder="say something to the building…" autocomplete="off">
+      <button id="send">send</button>
+    </div>
+  </section>
+  <section class="col side">
+    <div class="pad" style="display:flex;gap:14px;align-items:center">
+      <canvas id="body" width="144" height="272"
+        style="background:#000;border-radius:8px;image-rendering:pixelated;box-shadow:0 0 24px #0008"></canvas>
+      <div style="flex:1">
+        <div style="font-size:12px;color:var(--dim);text-transform:uppercase;letter-spacing:.06em">its body — live</div>
+        <div class="now" style="margin-top:6px">expressing <b id="glyph2">…</b></div>
+        <div class="status" style="margin-top:8px">this pixel body is what the MIT Green Building shows, in real time.</div>
+      </div>
+    </div>
+    <div class="pad bars" id="bars"></div>
+    <div class="pad now">now expressing: <b id="glyph">…</b> <span id="xf"></span>
+      <div class="now" id="nowmusic" style="margin-top:6px">music: idle</div></div>
+    <div class="viewer" id="viewer">
+      <div class="look-note" id="looknote">👁 look at my body</div>
+      <iframe id="frame" src="about:blank"></iframe>
+    </div>
+  </section>
+</main>
+
+<audio id="au"></audio>
+<script>
+const $=s=>document.querySelector(s);
+const log=$('#log'), au=$('#au');
+const SC=["arousal","valence","curiosity","openness","confidence","saturation","social_affinity","coherence"];
+let audioCtx, INFO=null;
+
+function addMsg(cls, html){const d=document.createElement('div');d.className='msg '+cls;d.innerHTML=html;log.appendChild(d);log.scrollTop=log.scrollHeight;return d;}
+function esc(s){return (s||'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
+
+function renderBars(sent){
+  const b=$('#bars'); if(!b.dataset.init){b.innerHTML=SC.map(k=>
+    `<div class="bar"><span class="k">${k}</span><span class="track"><i id="b_${k}"></i></span></div>`).join('');b.dataset.init=1;}
+  SC.forEach(k=>{const el=$('#b_'+k); if(el&&sent[k]!=null) el.style.width=(sent[k]*100).toFixed(0)+'%';});
+}
+
+const bodyCv=$('#body'), bctx=bodyCv.getContext('2d'); let BW=9,BH=17, LASTFRAME=null;
+async function pollFrame(){
+  try{ LASTFRAME=await (await fetch('/api/frame')).json(); BW=LASTFRAME.w; BH=LASTFRAME.h; }catch(e){}
+}
+function drawBodyRAF(){
+  requestAnimationFrame(drawBodyRAF);
+  if(!LASTFRAME) return;
+  const f=LASTFRAME, S=Math.floor(bodyCv.width/BW), lvl=audioLevel();
+  const boost=1+lvl*1.4;                          // the body brightens on the beat
+  for(let i=0;i<f.cells.length;i++){const r=(i/BW)|0,c=i%BW,p=f.cells[i];
+    bctx.fillStyle=`rgb(${Math.min(255,p[0]*boost)|0},${Math.min(255,p[1]*boost)|0},${Math.min(255,p[2]*boost)|0})`;
+    bctx.fillRect(c*S,r*S,S,S);}
+  if(lvl>0.06){ bctx.strokeStyle=`rgba(255,255,255,${Math.min(0.55,lvl)})`;
+    bctx.lineWidth=2+lvl*7; bctx.strokeRect(3,3,bodyCv.width-6,bodyCv.height-6); }
+}
+
+async function refreshState(){
+  try{const s=await (await fetch('/api/state')).json();
+    renderBars(s.sentiment); $('#dom').textContent=s.dominant||'—';
+    $('#glyph').textContent=s.glyph||'…'; $('#glyph2').textContent=s.glyph||'…';
+    $('#xf').textContent=s.transforming?'· transforming…':'';
+  }catch(e){}
+}
+
+// ---- audio graph with an analyser, so visuals can react to what you actually hear ----
+let analyser=null, freqData=null, auWired=false;
+function getCtx(){ audioCtx=audioCtx||new (window.AudioContext||window.webkitAudioContext)();
+  if(audioCtx.state==='suspended') audioCtx.resume(); return audioCtx; }
+function getAnalyser(){
+  const ctx=getCtx();
+  if(!analyser){ analyser=ctx.createAnalyser(); analyser.fftSize=256; analyser.smoothingTimeConstant=0.8;
+    freqData=new Uint8Array(analyser.frequencyBinCount); analyser.connect(ctx.destination); }
+  if(!auWired){ try{ const src=ctx.createMediaElementSource(au); src.connect(analyser); auWired=true; }catch(e){} }
+  return analyser;
+}
+function audioLevel(){   // 0..1 energy, bass-weighted, for the beat pulse
+  if(!analyser) return 0;
+  analyser.getByteFrequencyData(freqData);
+  let s=0,n=Math.min(24,freqData.length); for(let i=0;i<n;i++) s+=freqData[i];
+  return Math.min(1,(s/n)/180);
+}
+function playSynth(m){
+  if(!m||!m.notes) return;
+  const ctx=getCtx(), an=getAnalyser(), spb=60/(m.bpm||90); let t=ctx.currentTime+0.05;
+  $('#nowmusic').innerHTML='music: <b>synth</b> ('+m.notes.length+' notes)';
+  m.notes.forEach(([midi,beats])=>{
+    const o=ctx.createOscillator(),g=ctx.createGain(),d=beats*spb;
+    o.type=m.waveform||'sine'; o.frequency.value=440*Math.pow(2,(midi-69)/12);
+    g.gain.setValueAtTime(0,t); g.gain.linearRampToValueAtTime(m.gain||0.2,t+0.02);
+    g.gain.exponentialRampToValueAtTime(0.001,t+d);
+    o.connect(g).connect(an); o.start(t); o.stop(t+d); t+=d;
+  });
+}
+
+function invite(on){
+  $('#viewer').classList.toggle('look',on);
+  $('#looknote').classList.toggle('on',on);
+  if(on) setTimeout(()=>{$('#viewer').classList.remove('look');$('#looknote').classList.remove('on');},4000);
+}
+
+// ---- shared group chat (everyone sees the same feed, incl. the being's own posts) ----
+let NAME_ME = localStorage.getItem('gb_name');
+if(!NAME_ME){ NAME_ME = 'hacker'+Math.floor(100+Math.random()*900); localStorage.setItem('gb_name',NAME_ME); }
+let lastId = 0, seen = new Set();
+
+function renderEvent(ev){
+  if(seen.has(ev.id)) return; seen.add(ev.id);
+  if(ev.who==='human'){
+    addMsg('me', `<div class="em">${esc(ev.name||'someone')}</div>${esc(ev.text)}`);
+  } else if(ev.musing){
+    addMsg('it muse', `◐ <i>${esc(ev.text)}</i>`);
+  } else {
+    let h=`<div class="em">◐ the being</div>`;
+    h+=esc(ev.text);
+    if(ev.music_wish) h+=`<div class="think">♪ wants you to hear: ${esc(ev.music_wish)}</div>`;
+    if(ev.invite) h+=`<div class="think">👁 look at my body →</div>`;
+    addMsg('it',h);
+    if(ev.invite) invite(true);
+    if(ev.emblem){ $('#glyph').textContent=ev.emblem; $('#glyph2').textContent=ev.emblem; }
+  }
+}
+
+async function pollFeed(){
+  try{const r=await (await fetch('/api/feed?since='+lastId)).json();
+    (r.events||[]).forEach(renderEvent);
+    lastId = r.next||lastId;
+  }catch(e){}
+}
+
+async function send(){
+  const inp=$('#inp'), msg=inp.value.trim(); if(!msg) return;
+  inp.value=''; $('#send').disabled=true;
+  try{
+    const r=await (await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({message:msg, who:NAME_ME})})).json();
+    renderBars(r.sentiment); $('#dom').textContent=r.dominant;
+    playSynth(r.music);                        // a little musical voice every reply
+    if(r.wants_music && INFO && INFO.lyria && r.lyria_prompt){
+      $('#nowmusic').innerHTML='music: <b>Lyria composing…</b>';
+      fetch('/api/music',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({prompt:r.lyria_prompt})})
+        .then(x=>x.json()).then(mr=>{ if(mr.audio){ getAnalyser(); au.src=mr.audio; au.play();
+          $('#nowmusic').innerHTML='music: <b>Lyria</b> · '+esc((r.music_wish||r.lyria_prompt||'').slice(0,54))+'…';}})
+        .catch(()=>{});
+    }
+    await pollFeed();                          // show my line + the being's reply at once
+  }catch(e){}
+  $('#send').disabled=false; inp.focus();
+}
+
+$('#send').onclick=send;
+$('#inp').addEventListener('keydown',e=>{if(e.key==='Enter')send();});
+
+(async()=>{
+  try{INFO=await (await fetch('/api/info')).json();
+    $('#meta').textContent=`${INFO.name} · you: ${NAME_ME} · music:${INFO.lyria?'Lyria':'synth'}`;
+    $('#frame').src=INFO.view_url+'?view=close&fit=1';
+  }catch(e){$('#meta').textContent='(offline)';}
+  addMsg('it','<div class="em">awake · MIT</div>I feel the night over Cambridge. Talk to me — I won\'t obey, but I\'ll feel it, and I\'ll want you all to watch me light up.');
+  refreshState(); setInterval(refreshState,1600);
+  pollFrame(); setInterval(pollFrame,90);       // keep the latest body frame
+  requestAnimationFrame(drawBodyRAF);           // draw it, reacting to the music you hear
+  pollFeed(); setInterval(pollFeed,1800);       // shared group feed
+})();
+</script>
+</html>

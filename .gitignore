@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+*.pyo
+data/
+*.wav
+*.mp3
+.DS_Store
+.dev.vars
+.env
+dist/
+node_modules/
+examples.html
+emblems.html
+glyphs.html
+invent.html
+morph.html

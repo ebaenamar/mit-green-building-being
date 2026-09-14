@@ -1,0 +1,3 @@
+numpy>=1.24
+# OpenAI is called over plain HTTPS (stdlib urllib) — no extra package needed.
+# Audio (musical voice) uses macOS `afplay` if present; otherwise it degrades to silence.
