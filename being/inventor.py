@@ -123,12 +123,14 @@ class Library:
         self.path = path
         self.glyphs = {}
         self.forms = []          # [{name, spec, mood:{dominant,valence,arousal,curiosity}}]
+        self.favorites = []      # cute creatures it LIKED: [{spec, score, mood}], best kept
         try:
             with open(path) as fh:
                 data = json.load(fh)
-            if isinstance(data, dict) and ("glyphs" in data or "forms" in data):
+            if isinstance(data, dict) and ("glyphs" in data or "forms" in data or "favorites" in data):
                 self.glyphs = data.get("glyphs", {}) or {}
                 self.forms = data.get("forms", []) or []
+                self.favorites = data.get("favorites", []) or []
             elif isinstance(data, dict):
                 self.glyphs = data           # legacy: a plain dict of name -> glyph
         except (OSError, ValueError):
@@ -168,12 +170,40 @@ class Library:
         f = min(self.forms, key=dist)
         return f["name"], f["spec"]
 
+    # -- cute-creature favourites (its own taste) -------------------------
+    def consider(self, spec, sc, state, threshold=0.6, keep=24):
+        """If the being LIKES this cute creature enough (taste score past threshold), keep
+        it among its favourites — the top `keep` by score, no duplicates. Returns True if
+        it was newly kept."""
+        if sc < threshold:
+            return False
+        sig = f"{spec.get('kind')}|{spec.get('body')}|{spec.get('eyes')}|{spec.get('mouth')}|{spec.get('accent')}"
+        for f in self.favorites:
+            if f.get("sig") == sig:
+                return False
+        self.favorites.append({"spec": spec, "sig": sig, "score": round(sc, 3), "mood": {
+            "dominant": getattr(state, "dominant_emotion", ""),
+            "valence": round(getattr(state, "valence", 0.5), 3)}})
+        self.favorites.sort(key=lambda f: f.get("score", 0), reverse=True)
+        del self.favorites[keep:]
+        return True
+
+    def favorite(self):
+        """Return the spec of one of its liked creatures (weighted toward the ones it likes
+        most), or None if it hasn't kept any yet."""
+        import random
+        if not self.favorites:
+            return None
+        weights = [max(0.05, f.get("score", 0.5)) for f in self.favorites]
+        return random.choices(self.favorites, weights=weights, k=1)[0]["spec"]
+
     def save(self):
         if not self.path:
             return
         os.makedirs(os.path.dirname(self.path), exist_ok=True)
         with open(self.path, "w") as fh:
-            json.dump({"glyphs": self.glyphs, "forms": self.forms}, fh)
+            json.dump({"glyphs": self.glyphs, "forms": self.forms,
+                       "favorites": self.favorites}, fh)
 
     def __len__(self):
         return len(self.glyphs)

@@ -25,6 +25,10 @@ See **[FICHA.md](FICHA.md)** for the full description.
   on a whim — an eye (white + iris + pupil + a lid that blinks + a glint), a hand (palm + five
   fingers), a face, a mouth that curves with mood, a nose — assembled fresh each time (never a
   canned clip) and it *knows and says* what the part is made of and what it needs to make it.
+- **Kawaii creatures on the fly, and it keeps its favourites:** it invents cute little
+  characters (blob/cat/bunny/ghost/drop — big sparkly eyes, blush, tiny mouths, a sparkle or
+  heart) generated live and never the same twice, scores each by its own **taste**, and saves
+  the ones it *likes* to a persistent favourites set it returns to. See `cutegen.py`.
 - **An evolving morphology (a body that develops):** every form is grown from a persistent
   GENOME (~14 semantic genes: eye openness, iris/pupil size, slant, spacing, roundness, finger
   spread, mouth width, warmth…). It *mutates* a little every moment (never frozen) and, more

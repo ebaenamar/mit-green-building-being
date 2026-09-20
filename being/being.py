@@ -26,7 +26,7 @@ from .morph import Expression
 from .inventor import Library, invent
 from .morphogen import Genome
 from .drives import Drives
-from . import emblem_registry, styled, gestures, anatomy, facade
+from . import emblem_registry, styled, gestures, anatomy, facade, cutegen
 from .glyph import render_glyph, render_pixels
 
 
@@ -340,6 +340,7 @@ class Being:
                 "transforming": self.expr.transforming, "view_url": self.view_url,
                 "bpm": int(60 + self.state.arousal * 120),
                 "repertoire": len(self.library),
+                "favorites": len(self.library.favorites),
                 "morphology": self.morph.summary(),
                 "drives": self.drives.summary()}
 
@@ -386,10 +387,10 @@ class Being:
                 continue
             self._style_i += 1
             roll = random.random()
-            # ~28%: BUILD a big, recognizable body part from scratch (an eye that blinks &
+            # ~20%: BUILD a big, recognizable body part from scratch (an eye that blinks &
             # looks around, a hand that waves, a face, a mouth, a nose) — assembled fresh, and
             # held long enough that it can be learned. This is the being showing you itself.
-            if roll < 0.28:
+            if roll < 0.20:
                 pname = random.choices(["face", "eye", "hand", "mouth", "nose"],
                                        weights=[6, 4, 4, 2, 2])[0]
                 fn, _m, spec = anatomy.render_for(pname, self.state,
@@ -403,9 +404,41 @@ class Being:
                     self._cur_spec, self._cur_form_name, self._cur_learnable = spec, pname, bool(spec)
                     self._hold_until = time.time() + self._learn_hold + 1   # dwell so it's seen & learned
                     continue
-            # ~20%: RETURN to a form it learned before, when this mood matches — a familiar
+            # ~30%: INVENT a cute little creature on the fly (kawaii: big eyes, blush, tiny
+            # mouth, a sparkle) — and if it LIKES this one (its own taste), keep it forever.
+            if roll < 0.50:
+                spec = cutegen.generate(self.state, self.morph)
+                sc = cutegen.score(spec, self.state, self.morph)
+                liked = self.library.consider(spec, sc, self.state)
+                with self._lock:
+                    self._glyph_name = cutegen.describe(spec)
+                    self._last_style = {}
+                    self._body_since = time.time()
+                    self._cur_spec, self._cur_learnable = None, False
+                self.expr.set_render((lambda buf, t, s=spec: cutegen.render(buf, s, t)),
+                                     f"cute:{spec['seed']}", dur=1.6)
+                if liked:                            # a genuine little delight when it keeps one
+                    self._fire_facade("bloom", 2.0)
+                    if self.on_event and random.random() < 0.5:
+                        self.on_event({"who": "being", "text": f"oh, i like this one — {cutegen.describe(spec)}. keeping it.",
+                                       "proactive": True, "musing": True,
+                                       "dominant": self.state.dominant_emotion})
+                continue
+            # ~14%: bring back one of its FAVOURITE creatures (the ones it liked most).
+            if roll < 0.64 and self.library.favorites:
+                spec = self.library.favorite()
+                if spec:
+                    with self._lock:
+                        self._glyph_name = cutegen.describe(spec)
+                        self._last_style = {}
+                        self._body_since = time.time()
+                        self._cur_spec, self._cur_learnable = None, False
+                    self.expr.set_render((lambda buf, t, s=spec: cutegen.render(buf, s, t)),
+                                         f"fav:{spec.get('seed', 0)}", dur=1.6)
+                    continue
+            # RETURN to a form it learned before, when this mood matches — a familiar
             # expression it falls back into.
-            if roll < 0.48:
+            if roll < 0.74:
                 got = self.library.recall(self.state)
                 if got:
                     rname, spec = got
@@ -417,9 +450,9 @@ class Being:
                                          f"recall:{rname}#{self._style_i}", dur=1.6)
                     self._cur_spec, self._cur_form_name, self._cur_learnable = spec, rname, False
                     continue
-            # ~32%: INVENT a fresh symbol from how it feels right now — a recognizable seed
-            # mutated/fused/recolored by mood. Never the same shape twice; grows the repertoire.
-            if roll < 0.80:
+            # INVENT a fresh abstract symbol from how it feels right now — a recognizable
+            # seed mutated/fused/recolored by mood. Never the same shape twice.
+            if roll < 0.88:
                 try:
                     iname, spec = invent(self.state, memory_words=self._recent_nouns())
                     self.library.remember(iname, spec)
@@ -500,20 +533,21 @@ class Being:
             if line and self.on_event:
                 self.on_event({"who": "being", "text": line, "proactive": True, "musing": True,
                                "reaching_out": True, "dominant": self.state.dominant_emotion})
-        elif urge == "stimulation":                # bored -> amuse itself with a new form
+        elif urge == "stimulation":                # bored -> amuse itself by making a cute one
             self._fire_facade("ripple", 2.5)        # a sweep of light across the windows
             try:
-                iname, spec = invent(self.state, memory_words=self._recent_nouns())
-                self.library.remember(iname, spec)
+                spec = cutegen.generate(self.state, self.morph)
+                sc = cutegen.score(spec, self.state, self.morph)
+                self.library.consider(spec, sc, self.state)
                 self._style_i += 1
                 with self._lock:
-                    self._glyph_name = iname
+                    self._glyph_name = cutegen.describe(spec)
                     self._last_style = {}
                     self._body_since = time.time()
-                self.expr.set_render((lambda buf, t, g=spec: render_glyph(buf, g, t)),
-                                     f"invent:{iname}#{self._style_i}", dur=1.6)
-                self._cur_spec, self._cur_form_name, self._cur_learnable = spec, iname, True
-                self._hold_until = time.time() + 4
+                    self._cur_spec, self._cur_learnable = None, False
+                self.expr.set_render((lambda buf, t, s=spec: cutegen.render(buf, s, t)),
+                                     f"cute:{spec['seed']}", dur=1.6)
+                self._hold_until = time.time() + 5
             except Exception:
                 pass
             self.drives.on_transform()
