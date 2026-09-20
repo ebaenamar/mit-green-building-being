@@ -26,7 +26,7 @@ from .morph import Expression
 from .inventor import Library, invent
 from .morphogen import Genome
 from .drives import Drives
-from . import emblem_registry, styled, gestures, anatomy
+from . import emblem_registry, styled, gestures, anatomy, facade
 from .glyph import render_glyph, render_pixels
 
 
@@ -101,6 +101,9 @@ class Being:
         self._scalars = ("arousal", "valence", "curiosity", "openness", "confidence",
                          "saturation", "social_affinity", "coherence")
         self.buf = np.zeros((ROWS, COLS, 3), dtype=float)
+        self._fg = np.zeros((ROWS, COLS, 3), dtype=float)    # the face/emblem layer
+        self._wash = np.zeros((ROWS, COLS, 3), dtype=float)  # the whole-facade mood field
+        self._facade_event = None                            # transient legible facade gesture
         self._lock = threading.Lock()
         self._pending = []                 # raw stimuli awaiting the mind
         self._target = None                # emotional target the body eases toward
@@ -200,6 +203,7 @@ class Being:
         self._returned = self.drives.alone_seconds() > 90
         if self._returned:
             self._spark = 1.3
+            self._fire_facade("perk", 1.6)          # the whole facade brightens: it noticed you
 
         # If they asked to SEE a body part, BUILD it from scratch on the screen INSTANTLY —
         # before the language model even answers. It knows what the part is made of and
@@ -491,11 +495,13 @@ class Being:
         import random
         if urge == "social":                       # lonely -> reach out (a reply relieves more)
             self.drives.social = min(self.drives.social, 0.55)
+            self._fire_facade("withdraw", 5.0)      # and the whole facade dims/pulls inward
             line = self._drive_line("social")
             if line and self.on_event:
                 self.on_event({"who": "being", "text": line, "proactive": True, "musing": True,
                                "reaching_out": True, "dominant": self.state.dominant_emotion})
         elif urge == "stimulation":                # bored -> amuse itself with a new form
+            self._fire_facade("ripple", 2.5)        # a sweep of light across the windows
             try:
                 iname, spec = invent(self.state, memory_words=self._recent_nouns())
                 self.library.remember(iname, spec)
@@ -517,6 +523,7 @@ class Being:
                                "dominant": self.state.dominant_emotion})
         elif urge == "expression":                 # urge to express -> put out music
             self.drives.on_music()
+            self._fire_facade("bloom", 3.5)         # a bright bloom breaks across the facade
             line = self._drive_line("expression")
             if self.on_event:
                 self.on_event({"who": "being", "text": line or "hold on — i want to play something.",
@@ -586,9 +593,15 @@ class Being:
 
                     if self.express_mode == "glyph":
                         self.expr.update(dt)
-                        self.expr.render(self.buf, now)
-                        # beat: pulse the body at the tempo of the music it's making
-                        # (both derive from arousal), so the building throbs in time.
+                        self.expr.render(self._fg, now)          # the face/emblem
+                        # the WHOLE facade carries mood (legible at 90 m): fill every window
+                        # with a living mood field, then composite the face over it so the
+                        # dead black background becomes a breathing, autonomous body.
+                        facade.render_wash(self._wash, self.state, self.drives, self.city,
+                                           now, self._facade_event)
+                        mask = (self._fg.max(axis=2) < 0.06)[..., None]
+                        np.copyto(self.buf, np.where(mask, self._wash, self._fg))
+                        # beat: the whole facade pulses at the music's tempo (from arousal).
                         bpm = 60 + self.state.arousal * 120
                         self.buf *= 0.86 + 0.14 * (0.5 + 0.5 * math.sin(2 * math.pi * (bpm / 60.0) * now))
                         if self._spark > 0:
@@ -705,6 +718,10 @@ class Being:
         self._cur_spec, self._cur_learnable = None, False   # pixel bitmaps use a different renderer
         self._hold_until = time.time() + 10
 
+    def _fire_facade(self, kind: str, dur: float = 2.5):
+        """Trigger a transient, legible whole-facade gesture (bloom/withdraw/ripple/perk)."""
+        self._facade_event = (kind, time.time(), dur)
+
     def _maybe_learn(self):
         """If the being has HELD its current composed form long enough, consolidate it into
         the repertoire, tagged with this mood — so it can deliberately return to it later."""
@@ -777,6 +794,7 @@ class Being:
             self._body_since = time.time()
         self.expr.set_render(fn, f"{name}#{self._style_i}", dur=dur)
         self._cur_spec, self._cur_form_name, self._cur_learnable = learn_spec, name, bool(learn_spec)
+        self._fire_facade("bloom", 2.5)            # a real mood shift surges across the facade
         self._last_expr_dom = dom
         if announce and self.on_event:
             utter = (decision.utterance if (decision and decision.utterance)
