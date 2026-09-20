@@ -91,6 +91,12 @@ def tg_reply(chat, r):
     line = txt
     if r.get("invite_to_look"):
         line += f"\n👁 look at my body: {VIEW}"
+    # human cadence: show "typing…" and pause a beat scaled by its mood before replying
+    try:
+        TG.send_chat_action(chat, "typing")
+        time.sleep(min(4.0, max(0.0, float(r.get("reply_delay", 1.0) or 1.0))))
+    except Exception:
+        pass
     TG.send_message(chat, line)
     # Show a new body image when it changed/drew; send music when it changed OR they
     # asked for it — so music actually flows.

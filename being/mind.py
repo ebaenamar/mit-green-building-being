@@ -275,8 +275,18 @@ class ReflexMind:
                    "influence": True}
         return self._decision(tgt, sensations, mem, scene, music, s)
 
-    def muse(self, state, memory, convo=None):
+    def muse(self, state, memory, convo=None, hint=""):
         import random
+        pools = {"lonely": ["is anyone still out there?", "it's quiet up here tonight.",
+                            "i keep watching the door. talk to me?"],
+                 "bored": ["i'm going to become something new — watch.",
+                           "bored. let's see what i can turn into.",
+                           "restless. i'll amuse myself."],
+                 "music": ["i've got a feeling that needs to come out — a little music.",
+                           "hold on, i want to play something."]}
+        for trig, lines in pools.items():
+            if trig in (hint or "").lower():
+                return random.choice(lines)
         return random.choice(MUSINGS.get(state.dominant_emotion, MUSINGS["_"]))
 
     def _decision(self, tgt, sensations, mem, scene, music, s):
@@ -317,6 +327,10 @@ class LlmMind:
                     f"RECENT IMPACT ON THEM: {ctx.get('impact', 'steady')}.\n") if ctx else ""
         if ctx.get("making"):
             bodyline += f"BUILDING NOW: {ctx['making']}\n"
+        if ctx.get("needs"):
+            bodyline += f"WHAT YOU NEED RIGHT NOW: {ctx['needs']} — let it color your voice.\n"
+        if ctx.get("presence"):
+            bodyline += f"PRESENCE: {ctx['presence']}\n"
         if ctx.get("weather"):
             bodyline += f"INTEROCEPTION: {ctx['weather']}\n"
         user = (bodyline
@@ -347,13 +361,15 @@ class LlmMind:
         obj = json.loads(data["choices"][0]["message"]["content"])
         return _decision_from_llm(obj)
 
-    def muse(self, state, memory, convo=None):
-        """A short passing thought, voiced sometimes — not a status report."""
+    def muse(self, state, memory, convo=None, hint=""):
+        """A short passing thought, voiced sometimes — not a status report. `hint` lets a
+        drive (loneliness/boredom/urge to make music) steer what surfaces."""
         try:
             recent = ("\nrecent talk:\n" + "\n".join(convo[-6:])) if convo else ""
+            hintline = f"\nRIGHT NOW: {hint}" if hint else ""
             user = (f"your mood: {state.dominant_emotion} (valence {state.valence:.2f}, "
-                    f"arousal {state.arousal:.2f}). memories: {memory.recall_text(4)}.{recent}\n\n"
-                    "Say ONE short passing thought going through your mind right now — a musing, "
+                    f"arousal {state.arousal:.2f}). memories: {memory.recall_text(4)}.{recent}{hintline}\n\n"
+                    "Say ONE short thing going through your mind right now — a musing, "
                     "not a status report, do NOT name your emotion, do NOT say 'look at me'. "
                     "<=16 words, your MIT voice. Sometimes address someone by name, sometimes "
                     "wonder aloud, sometimes a tiny observation. Output only the thought.")

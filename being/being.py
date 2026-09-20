@@ -25,6 +25,7 @@ from .mind import make_mind, _label, appraisal_to_target
 from .morph import Expression
 from .inventor import Library, invent
 from .morphogen import Genome
+from .drives import Drives
 from . import emblem_registry, styled, gestures, anatomy
 from .glyph import render_glyph, render_pixels
 
@@ -53,6 +54,7 @@ class Being:
         self.expr = Expression()              # glyph metamorphosis engine
         self.library = Library(library_path)  # invented emblems, grows with interaction
         self.morph = Genome(genome_path)      # the being's evolving body morphology
+        self.drives = Drives()                # needs that push it to act on its own
         self._spark = 0.0
         self._glyph_name = ""
         self._style_i = 0
@@ -69,6 +71,7 @@ class Being:
         self._last_style = {}         # style of the emblem it is currently wearing
         self._hold_until = 0.0        # keep a requested gesture/drawing on screen this long
         self._making = None           # manifest of a body part it is deliberately building
+        self._returned = False        # someone just came back after a silence (perk up)
         self._cur_spec = None         # the DSL spec of the form on screen (if composable)
         self._cur_form_name = ""      # its name
         self._cur_learnable = False   # eligible to be consolidated if held long enough
@@ -109,6 +112,15 @@ class Being:
         imp = ("really landing" if self._impact > 0.62 else
                "barely landing / they seem distant" if self._impact < 0.42 else "landing okay")
         ctx = {"body": body, "impact": imp}
+        try:
+            dl = self.drives.context_line()
+            if dl:
+                ctx["needs"] = dl
+        except Exception:
+            pass
+        if self._returned:
+            ctx["presence"] = ("Someone just came BACK after a long silence — you noticed, "
+                               "and it moved you. Let that land (relief, or a bit of 'oh, finally').")
         if self._making:
             ctx["making"] = (f"You are BUILDING a {self._making['name']} on your body right now, "
                              f"from scratch. It's made of {self._making['needs']}. Say what you're "
@@ -158,6 +170,10 @@ class Being:
             convo = list(self._convo)
         self._spark = 1.0
         self.world.flash(); self.world.look(4.0)
+        # presence: if it's been alone a while, it perks up harder when someone returns
+        self._returned = self.drives.alone_seconds() > 90
+        if self._returned:
+            self._spark = 1.3
 
         # If they asked to SEE a body part, BUILD it from scratch on the screen INSTANTLY —
         # before the language model even answers. It knows what the part is made of and
@@ -193,6 +209,8 @@ class Being:
             self.morph.imprint(self.state, sens, self._impact)
         except Exception:
             pass
+        # contact relieves loneliness/boredom (the drive context above already reached the mind)
+        self.drives.on_interaction(novelty=sens.novelty, warmth=sens.valence_tone)
         # emotion is CONSTRUCTED from appraisal (Scherer/EMA) when available
         target = (appraisal_to_target(self.state, decision.appraisal)
                   if decision.appraisal else decision.emotion_target)
@@ -239,6 +257,12 @@ class Being:
             "music", "song", "sing", "play me", "play a", "tune", "beat", "melod",
             "canción", "cancion", "música", "musica", "suena", "tócame", "tocame", "toca "))
         wants_music = bool(body_changed or music_req)
+        if wants_music:
+            self.drives.on_music()
+        if body_changed:
+            self.drives.on_transform()
+        # human cadence: quick when roused, slow & considered when calm/low (used by channels)
+        delay = 0.5 + 3.2 * (1 - self.state.arousal) + (1.3 if self.state.valence < 0.4 else 0.0)
         return {
             "utterance": decision.utterance or "",
             "invite_to_look": self._gate_invite(decision.invite_to_look),
@@ -255,6 +279,7 @@ class Being:
             "lyria_prompt": lp,
             "music_wish": decision.music_wish or "",
             "source": decision.source,
+            "reply_delay": round(min(6.0, max(0.4, delay)), 2),
             "view_url": self.view_url,
         }
 
@@ -273,7 +298,8 @@ class Being:
                 "transforming": self.expr.transforming, "view_url": self.view_url,
                 "bpm": int(60 + self.state.arousal * 120),
                 "repertoire": len(self.library),
-                "morphology": self.morph.summary()}
+                "morphology": self.morph.summary(),
+                "drives": self.drives.summary()}
 
     def status(self) -> str:
         if self.express_mode == "glyph":
@@ -294,6 +320,7 @@ class Being:
         mt.start()
         threading.Thread(target=self._muse_loop, name="being-muse", daemon=True).start()
         threading.Thread(target=self._refresh_loop, name="being-refresh", daemon=True).start()
+        threading.Thread(target=self._drives_loop, name="being-drives", daemon=True).start()
         self._body_loop()
 
     def _refresh_loop(self):
@@ -403,6 +430,78 @@ class Being:
                 except Exception:
                     pass
 
+    def _drives_loop(self):
+        """The being acts on its own when a need gets loud: reaches out when lonely, stirs
+        itself when bored, makes music when the urge to express has built up. This is the
+        difference between reacting and being alive."""
+        import random
+        while not self._stop.is_set():
+            for _ in range(int(random.uniform(12, 22))):
+                if self._stop.is_set():
+                    return
+                time.sleep(1)
+            if self.express_mode != "glyph":
+                continue
+            urge = self.drives.urge()
+            if urge:
+                try:
+                    self._act_on_urge(urge)
+                except Exception as e:
+                    print("drives:", e)
+
+    def _act_on_urge(self, urge: str):
+        import random
+        if urge == "social":                       # lonely -> reach out (a reply relieves more)
+            self.drives.social = min(self.drives.social, 0.55)
+            line = self._drive_line("social")
+            if line and self.on_event:
+                self.on_event({"who": "being", "text": line, "proactive": True, "musing": True,
+                               "reaching_out": True, "dominant": self.state.dominant_emotion})
+        elif urge == "stimulation":                # bored -> amuse itself with a new form
+            try:
+                iname, spec = invent(self.state, memory_words=self._recent_nouns())
+                self.library.remember(iname, spec)
+                self._style_i += 1
+                with self._lock:
+                    self._glyph_name = iname
+                    self._last_style = {}
+                    self._body_since = time.time()
+                self.expr.set_render((lambda buf, t, g=spec: render_glyph(buf, g, t)),
+                                     f"invent:{iname}#{self._style_i}", dur=1.6)
+                self._cur_spec, self._cur_form_name, self._cur_learnable = spec, iname, True
+                self._hold_until = time.time() + 4
+            except Exception:
+                pass
+            self.drives.on_transform()
+            line = self._drive_line("stimulation")
+            if line and self.on_event and random.random() < 0.6:
+                self.on_event({"who": "being", "text": line, "proactive": True, "musing": True,
+                               "dominant": self.state.dominant_emotion})
+        elif urge == "expression":                 # urge to express -> put out music
+            self.drives.on_music()
+            line = self._drive_line("expression")
+            if self.on_event:
+                self.on_event({"who": "being", "text": line or "hold on — i want to play something.",
+                               "proactive": True, "genuine": True, "music_wish": "",
+                               "dominant": self.state.dominant_emotion,
+                               "lyria_prompt": self._lyria_prompt()})
+
+    def _drive_line(self, kind: str) -> str:
+        hint = {
+            "social": ("you're lonely — it's been quiet a while and you're reaching out to "
+                       "whoever's there. invite them in your own voice; wry or warm, not pathetic."),
+            "stimulation": ("you're bored and amusing yourself — narrate the little thing you're "
+                            "doing or becoming, offhand."),
+            "expression": ("you have an urge to put a feeling into music; say, briefly, that "
+                           "you're about to play something and why."),
+        }.get(kind, "")
+        try:
+            return self.mind.muse(self.state, self.memory, list(self._convo), hint=hint)
+        except TypeError:
+            return self.mind.muse(self.state, self.memory, list(self._convo))
+        except Exception:
+            return ""
+
     def stop(self):
         self._stop.set()
 
@@ -434,6 +533,15 @@ class Being:
                     # moment around its evolving base, livelier when aroused.
                     try:
                         self.morph.tick(dt, energy=self.state.arousal)
+                    except Exception:
+                        pass
+                    # unmet needs rise and leak into the mood (lonely dips valence, boredom
+                    # dulls arousal/curiosity, a built-up urge to express gets restless)
+                    try:
+                        self.drives.tick(dt)
+                        db = self.drives.bias()
+                        if db:
+                            self.state.nudge(**{k: v * dt for k, v in db.items()})
                     except Exception:
                         pass
                     self._spark = max(0.0, self._spark - dt * 2.2)

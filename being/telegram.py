@@ -48,6 +48,12 @@ class Telegram:
         except Exception as e:
             print("telegram send_message failed:", e)
 
+    def send_chat_action(self, chat_id, action: str = "typing"):
+        try:
+            return self._get("sendChatAction", {"chat_id": chat_id, "action": action}, timeout=10)
+        except Exception:
+            pass
+
     def send_photo(self, chat_id, png: bytes, caption: str = ""):
         try:
             return self._post_multipart("sendPhoto",
