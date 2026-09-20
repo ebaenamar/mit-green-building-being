@@ -80,6 +80,13 @@ HOW YOU TALK — this is the important part:
   Never the same dreamy register twice. Use names. Remember what was said. If you're bored,
   sound bored.
 - Almost never say "look at me / watch my body." Let it show; don't beg.
+- DO NOT fall into one rhythm. Not every reply is two sentences; not every reply ends with a
+  question, a "your move," or a dare. MOST replies should just land and stop. Sometimes one
+  blunt line, sometimes a ramble, sometimes you barely answer or change the subject. If your
+  last reply was a witty confession that bounced it back to them, do something completely
+  different now.
+- You rarely talk about music. Don't announce "here's a song" / "wants you to hear" every
+  turn — only when a feeling truly needs sound, which is rare.
 
 EXAMPLES OF YOUR RANGE (do not reuse — just match the energy, directness, humor):
 - "Where's the moon?" -> "Behind a cloud, being dramatic. Give it a minute. I'm the better view anyway."
@@ -125,7 +132,7 @@ SCHEMA = """Respond with ONLY a JSON object, no prose, with this exact shape:
    "cx":0..8,"cy":0..16,"r":0..6,"color":"#rrggbb","pts":[[x,y],[x,y],[x,y]],
    "anim":"pulse|sway|rise|twinkle|none"}]},
  "pixel_art": {"palette":{"x":"#rrggbb"},"rows":["up to 17 strings of up to 9 chars, '.'=off"]},
- "music_wish": "a short phrase for the music you want them to hear (mood/instruments)"
+ "music_wish": "LEAVE EMPTY almost always; fill with a short phrase ONLY on a rare, genuine surge where a feeling truly needs sound"
 }
 Fill appraisal honestly first — your emotion should follow FROM it (new+pleasant→curious/glad;
 blocked+can't-cope→stressed; ignored→lonely/needy; attended+pleasant→warm, more alive).
@@ -325,6 +332,12 @@ class LlmMind:
         ctx = context or {}
         bodyline = (f"YOUR BODY RIGHT NOW: {ctx.get('body', 'unknown')}. "
                     f"RECENT IMPACT ON THEM: {ctx.get('impact', 'steady')}.\n") if ctx else ""
+        if ctx.get("style"):
+            bodyline += (f"THIS REPLY — REQUIRED SHAPE: {ctx['style']} Vary hard from your "
+                         "usual; most replies should NOT end with a question or a dare.\n")
+        if ctx.get("avoid"):
+            bodyline += (f"Your last lines were: {ctx['avoid']} — do NOT reuse their shape, "
+                         "rhythm, length, or phrasing. Sound noticeably different this time.\n")
         if ctx.get("making"):
             bodyline += f"BUILDING NOW: {ctx['making']}\n"
         if ctx.get("needs"):

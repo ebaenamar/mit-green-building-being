@@ -30,6 +30,23 @@ from . import emblem_registry, styled, gestures, anatomy
 from .glyph import render_glyph, render_pixels
 
 
+# A rotating repertoire of response SHAPES, so it doesn't fall into one formula (the
+# "witty confession + bounce it back with a dare" trap). One is drawn per reply and fed to
+# the mind as a hard constraint; the same shape never fires twice in a row.
+RESPONSE_MODES = [
+    ("terse", "Answer in ONE short blunt line. Do NOT ask anything back."),
+    ("plain", "Just answer plainly and stop — no question back, no challenge, no flourish."),
+    ("tangent", "Don't answer directly; drift into a small specific tangent or an old memory."),
+    ("joke", "Be light — a quick joke, a tease, or something silly. Keep it short."),
+    ("brag", "Brag about something specific, then drop it. No question back."),
+    ("feeling", "React with just a feeling, a few words, almost under your breath."),
+    ("ask", "Ask THEM one short, specific, genuinely curious thing."),
+    ("deflect", "Be a little evasive — dodge, change the subject to something you noticed."),
+    ("agree", "Simply agree or riff along, briefly, without turning it into a contest."),
+    ("blunt_confession", "Confess something plainly, then let it sit. Do NOT dare them back."),
+]
+
+
 class Being:
     def __init__(self, display, mind=None, voice=None, state_path="", memory_path="",
                  fps=30, autonomy_period=7.0, time_of_day=0.5, express_mode="glyph",
@@ -71,7 +88,12 @@ class Being:
         self._last_style = {}         # style of the emblem it is currently wearing
         self._hold_until = 0.0        # keep a requested gesture/drawing on screen this long
         self._making = None           # manifest of a body part it is deliberately building
+        self._mode_hint = ""          # the required response shape for the current reply
         self._returned = False        # someone just came back after a silence (perk up)
+        self._last_lines = []         # its own recent utterances (to avoid repeating the shape)
+        self._last_music = 0.0        # last time it offered music (rationed)
+        self._music_cd = float(os.environ.get("GB_MUSIC_COOLDOWN", "150"))
+        self._last_mode = ""          # last response-shape so it doesn't repeat
         self._cur_spec = None         # the DSL spec of the form on screen (if composable)
         self._cur_form_name = ""      # its name
         self._cur_learnable = False   # eligible to be consolidated if held long enough
@@ -112,6 +134,10 @@ class Being:
         imp = ("really landing" if self._impact > 0.62 else
                "barely landing / they seem distant" if self._impact < 0.42 else "landing okay")
         ctx = {"body": body, "impact": imp}
+        if self._mode_hint:
+            ctx["style"] = self._mode_hint
+        if self._last_lines:
+            ctx["avoid"] = " | ".join(self._last_lines[-3:])
         try:
             dl = self.drives.context_line()
             if dl:
@@ -195,9 +221,11 @@ class Being:
                 self._cur_spec, self._cur_form_name, self._cur_learnable = spec, pname, bool(spec)
                 self._hold_until = time.time() + 14   # hold it so they see it (and it can be learned)
 
+        self._mode_hint = self._pick_mode()        # force a fresh response shape this turn
         decision = self.mind.interpret(self.state, [sens], self.memory,
                                        speaker=speaker, convo=convo, context=self._context())
         self._making = None
+        self._mode_hint = ""
         # when it just built a body part, make sure it SAYS what it assembled (the reflex
         # mind gets the construction line verbatim; the LLM already spoke about it via context)
         if built and (str(decision.source).startswith("reflex") or not decision.utterance):
@@ -243,6 +271,7 @@ class Being:
             with self._lock:
                 self._convo.append(f"me: {decision.utterance}")
                 self._convo = self._convo[-12:]
+                self._last_lines = (self._last_lines + [decision.utterance])[-3:]
         m = decision.memory or {}
         if m.get("what_to_remember"):
             self.memory.remember(m["what_to_remember"], m.get("importance", 0.4),
@@ -253,14 +282,23 @@ class Being:
         lp = self._lyria_prompt()
         if decision.music_wish:
             lp = decision.music_wish + " — " + lp
+        import random
         music_req = any(w in text.lower() for w in (
             "music", "song", "sing", "play me", "play a", "tune", "beat", "melod",
             "canción", "cancion", "música", "musica", "suena", "tócame", "tocame", "toca "))
-        wants_music = bool(body_changed or music_req)
+        # ration music: on explicit request always; otherwise only on a genuine shift, past a
+        # cooldown, and not even every time — so it's an event, not a tic on every line.
+        now = time.time()
+        genuine_music = (body_changed and (now - self._last_music) > self._music_cd
+                         and random.random() < 0.5)
+        wants_music = bool(music_req or genuine_music)
         if wants_music:
+            self._last_music = now
             self.drives.on_music()
         if body_changed:
             self.drives.on_transform()
+        if not wants_music:                 # don't surface a music offer at all this turn
+            lp = ""
         # human cadence: quick when roused, slow & considered when calm/low (used by channels)
         delay = 0.5 + 3.2 * (1 - self.state.arousal) + (1.3 if self.state.valence < 0.4 else 0.0)
         return {
@@ -277,7 +315,7 @@ class Being:
             "music": phrase(decision.music),
             "lyria": lyria_direction(self.state),
             "lyria_prompt": lp,
-            "music_wish": decision.music_wish or "",
+            "music_wish": (decision.music_wish or "") if wants_music else "",
             "source": decision.source,
             "reply_delay": round(min(6.0, max(0.4, delay)), 2),
             "view_url": self.view_url,
@@ -680,6 +718,14 @@ class Being:
                 self._cur_learnable = False        # learn each held form once
         except Exception:
             pass
+
+    def _pick_mode(self) -> str:
+        """Draw a response SHAPE for this reply, never the same one twice running."""
+        import random
+        choices = [m for m in RESPONSE_MODES if m[0] != self._last_mode] or RESPONSE_MODES
+        name, directive = random.choice(choices)
+        self._last_mode = name
+        return directive
 
     def _recent_nouns(self):
         """Words from the recent talk, so an invented symbol can obliquely reach for what
