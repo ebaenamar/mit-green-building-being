@@ -10,10 +10,14 @@ services:
   - type: web
     name: green-being
     runtime: python
-    plan: free
+    plan: starter          # always-on (free sleeps after ~15 min idle, killing initiative)
     buildCommand: pip install -r requirements.txt
     startCommand: python webapp/server.py
     autoDeploy: true
+    disk:                  # persist memory / genome / learned forms across restarts
+      name: data
+      mountPath: /opt/render/project/src/data
+      sizeGB: 1
     envVars:
       - key: PYTHON_VERSION
         value: "3.11.9"
@@ -27,8 +31,3 @@ services:
         sync: false
       - key: TELEGRAM_TOKEN       # set in the Render dashboard (never committed)
         sync: false
-    # For always-on + persistent memory/genome, switch plan to `starter` and uncomment:
-    # disk:
-    #   name: data
-    #   mountPath: /opt/render/project/src/data
-    #   sizeGB: 1
