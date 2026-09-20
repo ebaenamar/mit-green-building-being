@@ -26,6 +26,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from gbsim import WebDisplay
 from being.being import Being
 from being.mind import make_mind
+from being.city import CitySense
 from being import lyria, pngutil
 from being.telegram import Telegram
 
@@ -63,10 +64,14 @@ def make_instance():
 NAME = make_instance()
 VIEW = BASE.rsplit("/api", 1)[0] + "/" + NAME
 DISPLAY = WebDisplay(NAME, base_url=BASE)
+# Boston's live weather + light, folded into the being as interoception (disable with
+# GB_CITY=off). No API key needed (Open-Meteo); falls back to a synthetic sky offline.
+CITY = None if os.environ.get("GB_CITY", "").lower() in ("off", "0", "no") else CitySense()
 BEING = Being(DISPLAY, mind=make_mind(prefer_llm=True), voice=None,
               memory_path=os.path.join(HERE, "..", "data", "web_mem.json"),
               library_path=os.path.join(HERE, "..", "data", "web_glyphs.json"),
-              express_mode="glyph", view_url=VIEW, on_event=push,
+              genome_path=os.path.join(HERE, "..", "data", "web_morph.json"),
+              express_mode="glyph", view_url=VIEW, on_event=push, city=CITY,
               autonomy_period=float(os.environ.get("GB_AUTONOMY", "26")))
 threading.Thread(target=BEING.run, name="being", daemon=True).start()
 
@@ -208,7 +213,8 @@ class H(BaseHTTPRequestHandler):
             return self._send(200, json.dumps({
                 "name": NAME, "view_url": VIEW,
                 "mind": BEING.mind.__class__.__name__,
-                "lyria": lyria.have_key()}))
+                "lyria": lyria.have_key(),
+                "city": CITY.status() if CITY else "off"}))
         return self._send(404, "{}")
 
     def do_POST(self):
@@ -242,7 +248,8 @@ def main():
     port = int(os.environ.get("PORT", "8010"))
     print(f"Being '{NAME}' awake. mind={BEING.mind.__class__.__name__} "
           f"lyria={'on' if lyria.have_key() else 'off (synth)'} "
-          f"telegram={'on' if TG else 'off'}")
+          f"telegram={'on' if TG else 'off'} "
+          f"city={'on' if CITY else 'off'}")
     print(f"Building view: {VIEW}")
     print(f"Web app:      http://localhost:{port}")
     if TG:

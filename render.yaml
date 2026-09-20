@@ -1,0 +1,34 @@
+# Render Blueprint for the Green Being.
+# Deploy: Render dashboard -> New -> Blueprint -> connect this repo -> fill the three
+# secret env vars (marked sync:false) in the dashboard -> Apply. Render provides $PORT;
+# the app reads it and binds 0.0.0.0 automatically.
+#
+# NOTE ON PLAN: the free plan spins the service down after ~15 min idle, which stops the
+# being from driving the building and from polling Telegram. For an always-on installation
+# use `plan: starter` (and optionally add the disk block below for persistent memory).
+services:
+  - type: web
+    name: green-being
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python webapp/server.py
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+      - key: GB_INSTANCE          # reuse this Green Building sim instance
+        value: keen-seal
+      - key: GB_AUTONOMY
+        value: "26"
+      - key: OPENAI_API_KEY       # set in the Render dashboard (never committed)
+        sync: false
+      - key: GEMINI_KEY           # set in the Render dashboard (never committed)
+        sync: false
+      - key: TELEGRAM_TOKEN       # set in the Render dashboard (never committed)
+        sync: false
+    # For always-on + persistent memory/genome, switch plan to `starter` and uncomment:
+    # disk:
+    #   name: data
+    #   mountPath: /opt/render/project/src/data
+    #   sizeGB: 1

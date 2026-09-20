@@ -315,6 +315,10 @@ class LlmMind:
         ctx = context or {}
         bodyline = (f"YOUR BODY RIGHT NOW: {ctx.get('body', 'unknown')}. "
                     f"RECENT IMPACT ON THEM: {ctx.get('impact', 'steady')}.\n") if ctx else ""
+        if ctx.get("making"):
+            bodyline += f"BUILDING NOW: {ctx['making']}\n"
+        if ctx.get("weather"):
+            bodyline += f"INTEROCEPTION: {ctx['weather']}\n"
         user = (bodyline
                 + f"YOU FEEL: {state.dominant_emotion} (valence {state.valence:.2f}, "
                 f"arousal {state.arousal:.2f}) — react like a real person in this mood, and "

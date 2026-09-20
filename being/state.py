@@ -90,6 +90,24 @@ class EmotionalState:
         return asdict(self)
 
     @classmethod
+    def random(cls, rng=None) -> "EmotionalState":
+        """A genuinely varied waking mood — so the being starts each run feeling something
+        different (and thus expresses something different), never the same fixed state.
+        Ranges stay plausible: no broken extremes, just a real spread of temperaments."""
+        import random as _r
+        r = rng or _r
+        return cls(
+            arousal=round(r.uniform(0.22, 0.82), 3),
+            valence=round(r.uniform(0.30, 0.86), 3),
+            curiosity=round(r.uniform(0.40, 0.92), 3),
+            openness=round(r.uniform(0.35, 0.82), 3),
+            confidence=round(r.uniform(0.40, 0.82), 3),
+            saturation=round(r.uniform(0.00, 0.22), 3),
+            social_affinity=round(r.uniform(0.28, 0.72), 3),
+            coherence=round(r.uniform(0.45, 0.86), 3),
+        )
+
+    @classmethod
     def from_dict(cls, d: dict) -> "EmotionalState":
         known = {f.name for f in fields(cls)}
         return cls(**{k: v for k, v in d.items() if k in known})

@@ -23,31 +23,36 @@ from .memory import Memory
 from .state import EmotionalState
 from .mind import make_mind, _label, appraisal_to_target
 from .morph import Expression
-from .inventor import Library
-from . import emblem_registry, styled, gestures
+from .inventor import Library, invent
+from .morphogen import Genome
+from . import emblem_registry, styled, gestures, anatomy
 from .glyph import render_glyph, render_pixels
 
 
 class Being:
     def __init__(self, display, mind=None, voice=None, state_path="", memory_path="",
                  fps=30, autonomy_period=7.0, time_of_day=0.5, express_mode="glyph",
-                 library_path="", view_url="", on_event=None):
+                 library_path="", view_url="", on_event=None, city=None, genome_path=""):
         self.view_url = view_url
         self.on_event = on_event      # called with a dict when the being speaks to the group
         self.display = display
         self.mind = mind or make_mind()
         self.voice = voice
+        self.city = city              # Boston's live weather/light as interoception (optional)
         self.fps = fps
         self.autonomy_period = autonomy_period
         self.express_mode = express_mode      # "glyph" (emblems), "world" (Zelda), "face"
 
-        self.state = EmotionalState.load(state_path) if state_path else EmotionalState()
+        # Persisted continuity when a state file exists; otherwise wake in a fresh, random
+        # mood so the being genuinely starts each run feeling — and expressing — something new.
+        self.state = EmotionalState.load(state_path) if state_path else EmotionalState.random()
         self.memory = Memory(memory_path) if memory_path else Memory("/tmp/gb_mem.json")
         self.state_path = state_path
         self.perceiver = Perceiver()
         self.world = ZeldaWorld(time_of_day=time_of_day)
         self.expr = Expression()              # glyph metamorphosis engine
         self.library = Library(library_path)  # invented emblems, grows with interaction
+        self.morph = Genome(genome_path)      # the being's evolving body morphology
         self._spark = 0.0
         self._glyph_name = ""
         self._style_i = 0
@@ -63,6 +68,11 @@ class Being:
         self._body_since = time.time()
         self._last_style = {}         # style of the emblem it is currently wearing
         self._hold_until = 0.0        # keep a requested gesture/drawing on screen this long
+        self._making = None           # manifest of a body part it is deliberately building
+        self._cur_spec = None         # the DSL spec of the form on screen (if composable)
+        self._cur_form_name = ""      # its name
+        self._cur_learnable = False   # eligible to be consolidated if held long enough
+        self._learn_hold = float(os.environ.get("GB_LEARN_HOLD", "12"))
         self._scalars = ("arousal", "valence", "curiosity", "openness", "confidence",
                          "saturation", "social_affinity", "coherence")
         self.buf = np.zeros((ROWS, COLS, 3), dtype=float)
@@ -75,10 +85,19 @@ class Being:
         self._mind_src = self.mind.__class__.__name__
         self._last_line = ""
         if self.express_mode == "glyph":          # something to show before the first thought
-            nm, _ = emblem_registry.pick(self.state)
+            self._relabel()                        # name the random waking mood first
+            # invent the first body FROM that mood, so the very first thing on the building
+            # is unique to this run — recognizable, but never the same shape twice.
+            try:
+                nm, spec = invent(self.state)
+                self.library.remember(nm, spec)
+                self.expr.set_render((lambda buf, t, g=spec: render_glyph(buf, g, t)), nm + "#0")
+                self._cur_spec, self._cur_form_name, self._cur_learnable = spec, nm, True
+            except Exception:
+                nm, _ = emblem_registry.pick(self.state)
+                self.expr.set_render(styled.make_styled(nm, styled.style_for(self.state, 0)), nm + "#0")
             self._glyph_name = nm
             self._last_expr_dom = self.state.dominant_emotion
-            self.expr.set_render(styled.make_styled(nm, styled.style_for(self.state, 0)), nm + "#0")
 
     def _context(self) -> dict:
         """What the being knows about its own body + how it's landing — fed to the mind so
@@ -89,7 +108,29 @@ class Being:
                 f"{self.state.dominant_emotion} mood, held for {held}s")
         imp = ("really landing" if self._impact > 0.62 else
                "barely landing / they seem distant" if self._impact < 0.42 else "landing okay")
-        return {"body": body, "impact": imp}
+        ctx = {"body": body, "impact": imp}
+        if self._making:
+            ctx["making"] = (f"You are BUILDING a {self._making['name']} on your body right now, "
+                             f"from scratch. It's made of {self._making['needs']}. Say what you're "
+                             f"assembling as you show it — you KNOW exactly what it needs.")
+        if self.city:
+            try:
+                ctx["weather"] = self.city.context_line()
+            except Exception:
+                pass
+        return ctx
+
+    def _lyria_prompt(self) -> str:
+        """The Lyria text prompt for how it feels, tinted obliquely by the city's residue
+        (an afternoon of rain surfacing later as something peculiar)."""
+        from .music import lyria_prompt
+        p = lyria_prompt(self.state)
+        if self.city:
+            try:
+                p = self.city.color_prompt(p)
+            except Exception:
+                pass
+        return p
 
     # -- outside world pokes the being -------------------------------------
     def feel(self, raw: str):
@@ -118,23 +159,40 @@ class Being:
         self._spark = 1.0
         self.world.flash(); self.world.look(4.0)
 
-        # If they asked to SEE a body part / gesture, show it on the screen INSTANTLY —
-        # before the language model even answers. The screen is the body.
-        gname = gestures.detect(text) if self.express_mode == "glyph" else None
-        if gname:
-            self._style_i += 1
-            with self._lock:
-                self._glyph_name = gname
-                self._body_since = time.time()
-                self._last_style = {}
-            self.expr.set_render(gestures.make_gesture(gname, self.state),
-                                 f"gesture:{gname}#{self._style_i}", dur=0.5)
-            self._hold_until = time.time() + 10   # keep it up so they can actually see it
+        # If they asked to SEE a body part, BUILD it from scratch on the screen INSTANTLY —
+        # before the language model even answers. It knows what the part is made of and
+        # assembles it fresh (a new eye/hand each time), not a canned animation.
+        built = None
+        pname = anatomy.detect(text) if self.express_mode == "glyph" else None
+        if pname:
+            fn, manifest, spec = anatomy.render_for(pname, self.state,
+                                                    self.morph.express(pname, self.state))
+            if fn:
+                built = manifest
+                self._making = manifest
+                self._style_i += 1
+                with self._lock:
+                    self._glyph_name = pname
+                    self._body_since = time.time()
+                    self._last_style = {}
+                self.expr.set_render(fn, f"anatomy:{pname}#{self._style_i}", dur=0.6)
+                self._cur_spec, self._cur_form_name, self._cur_learnable = spec, pname, bool(spec)
+                self._hold_until = time.time() + 14   # hold it so they see it (and it can be learned)
 
         decision = self.mind.interpret(self.state, [sens], self.memory,
                                        speaker=speaker, convo=convo, context=self._context())
+        self._making = None
+        # when it just built a body part, make sure it SAYS what it assembled (the reflex
+        # mind gets the construction line verbatim; the LLM already spoke about it via context)
+        if built and (str(decision.source).startswith("reflex") or not decision.utterance):
+            decision.utterance = anatomy.construction_line(built)
         # its expressions landing well/poorly is a feedback signal it can feel
         self._impact = 0.82 * self._impact + 0.18 * sens.valence_tone
+        # every interaction leaves a tiny, lasting mark on its evolving body morphology
+        try:
+            self.morph.imprint(self.state, sens, self._impact)
+        except Exception:
+            pass
         # emotion is CONSTRUCTED from appraisal (Scherer/EMA) when available
         target = (appraisal_to_target(self.state, decision.appraisal)
                   if decision.appraisal else decision.emotion_target)
@@ -148,8 +206,8 @@ class Being:
             self._relabel()
         # The body changes only if that nudge actually tipped the being into a new mood;
         # otherwise it just answers with words and keeps the body it already wears.
-        if gname:
-            body_changed = True                    # already showing the requested gesture; keep it
+        if built:
+            body_changed = True                    # already showing the requested part; keep it
         elif self.express_mode == "glyph" and decision.pixels:   # the AI painted a specific thing
             self._express_pixels(decision.pixels,
                                  name=(decision.body_intent[:24] or "a drawing"))
@@ -174,7 +232,7 @@ class Being:
 
         it = (decision.structured or {}).get("interpretation") or {}
         SCAL = self._scalars
-        lp = lyria_prompt(self.state)
+        lp = self._lyria_prompt()
         if decision.music_wish:
             lp = decision.music_wish + " — " + lp
         music_req = any(w in text.lower() for w in (
@@ -214,7 +272,8 @@ class Being:
                 "dominant": self.state.dominant_emotion, "glyph": self._glyph_name,
                 "transforming": self.expr.transforming, "view_url": self.view_url,
                 "bpm": int(60 + self.state.arousal * 120),
-                "repertoire": len(self.library)}
+                "repertoire": len(self.library),
+                "morphology": self.morph.summary()}
 
     def status(self) -> str:
         if self.express_mode == "glyph":
@@ -226,6 +285,11 @@ class Being:
 
     # -- run ----------------------------------------------------------------
     def run(self):
+        if self.city:
+            try:
+                self.city.start()      # Boston starts seeping into the body
+            except Exception as e:
+                print(f"being: city sense failed to start: {e}")
         mt = threading.Thread(target=self._mind_loop, name="being-mind", daemon=True)
         mt.start()
         threading.Thread(target=self._muse_loop, name="being-muse", daemon=True).start()
@@ -241,25 +305,66 @@ class Being:
             for _ in range(int(random.uniform(13, 26))):   # change more often, feel alive
                 if self._stop.is_set():
                     return
+                self._maybe_learn()                # consolidate a form it's been holding
                 time.sleep(1)
+            try:
+                self.morph.save()                  # persist the evolving body periodically
+            except Exception:
+                pass
             if self.express_mode != "glyph" or self.expr.transforming:
                 continue
-            if time.time() < self._hold_until:     # a requested gesture/drawing is on screen
+            if time.time() < self._hold_until:     # a requested/held form is on screen
                 continue
             self._style_i += 1
-            # ~half the time show a LIVING gesture (a face that blinks, an eye that looks
-            # around, a wave, a little walk) instead of an abstract emblem — so passively
-            # watching the building feels like a creature, not the same shapes on loop.
-            if random.random() < 0.5:
-                gname = random.choices(["face", "eye", "wave", "walk"],
-                                       weights=[5, 2, 2, 2])[0]
-                with self._lock:
-                    self._glyph_name = gname
-                    self._last_style = {}
-                    self._body_since = time.time()
-                self.expr.set_render(gestures.make_gesture(gname, self.state),
-                                     f"gesture:{gname}#{self._style_i}", dur=1.6)
-                continue
+            roll = random.random()
+            # ~28%: BUILD a big, recognizable body part from scratch (an eye that blinks &
+            # looks around, a hand that waves, a face, a mouth, a nose) — assembled fresh, and
+            # held long enough that it can be learned. This is the being showing you itself.
+            if roll < 0.28:
+                pname = random.choices(["face", "eye", "hand", "mouth", "nose"],
+                                       weights=[6, 4, 4, 2, 2])[0]
+                fn, _m, spec = anatomy.render_for(pname, self.state,
+                                                  self.morph.express(pname, self.state))
+                if fn:
+                    with self._lock:
+                        self._glyph_name = pname
+                        self._last_style = {}
+                        self._body_since = time.time()
+                    self.expr.set_render(fn, f"anatomy:{pname}#{self._style_i}", dur=1.4)
+                    self._cur_spec, self._cur_form_name, self._cur_learnable = spec, pname, bool(spec)
+                    self._hold_until = time.time() + self._learn_hold + 1   # dwell so it's seen & learned
+                    continue
+            # ~20%: RETURN to a form it learned before, when this mood matches — a familiar
+            # expression it falls back into.
+            if roll < 0.48:
+                got = self.library.recall(self.state)
+                if got:
+                    rname, spec = got
+                    with self._lock:
+                        self._glyph_name = rname
+                        self._last_style = {}
+                        self._body_since = time.time()
+                    self.expr.set_render((lambda buf, t, g=spec: render_glyph(buf, g, t)),
+                                         f"recall:{rname}#{self._style_i}", dur=1.6)
+                    self._cur_spec, self._cur_form_name, self._cur_learnable = spec, rname, False
+                    continue
+            # ~32%: INVENT a fresh symbol from how it feels right now — a recognizable seed
+            # mutated/fused/recolored by mood. Never the same shape twice; grows the repertoire.
+            if roll < 0.80:
+                try:
+                    iname, spec = invent(self.state, memory_words=self._recent_nouns())
+                    self.library.remember(iname, spec)
+                    with self._lock:
+                        self._glyph_name = iname
+                        self._last_style = {}
+                        self._body_since = time.time()
+                    self.expr.set_render((lambda buf, t, g=spec: render_glyph(buf, g, t)),
+                                         f"invent:{iname}#{self._style_i}", dur=1.6)
+                    self._cur_spec, self._cur_form_name, self._cur_learnable = spec, iname, True
+                    continue
+                except Exception:
+                    pass
+            # ~20%: re-express through a fixed, hand-drawn emblem (fire, heart, wave...).
             name = emblem_registry.variant(self.state, self._style_i)
             if not emblem_registry.get(name):
                 continue
@@ -270,6 +375,7 @@ class Being:
                 self._body_since = time.time()
             self.expr.set_render(styled.make_styled(name, style),
                                  f"{name}#{self._style_i}", dur=1.6)
+            self._cur_spec, self._cur_learnable = None, False
 
     def _muse_loop(self):
         """Inner thoughts: now and then, the being voices a passing thought to the group —
@@ -314,7 +420,22 @@ class Being:
                     # the mood is inertial: it only drifts slowly back to baseline here;
                     # it is moved by messages (react) and by the mind loop, never jumped.
                     self.state.decay(dt, half_life=90.0)
+                    # Boston seeps in: a tiny, ever-present ambient drift (weather + light
+                    # as interoception), balanced against the decay above. Never a jump.
+                    if self.city:
+                        try:
+                            bias = self.city.bias()
+                            if bias:
+                                self.state.nudge(**{k: v * dt for k, v in bias.items()})
+                        except Exception:
+                            pass
                     self._relabel()
+                    # the body morphology is never frozen: it drifts (mutates) a little each
+                    # moment around its evolving base, livelier when aroused.
+                    try:
+                        self.morph.tick(dt, energy=self.state.arousal)
+                    except Exception:
+                        pass
                     self._spark = max(0.0, self._spark - dt * 2.2)
 
                     if self.express_mode == "glyph":
@@ -346,6 +467,7 @@ class Being:
                 self.state.save(self.state_path)
             self.memory.save()
             self.library.save()
+            self.morph.save()
 
     def _mind_loop(self):
         last = 0.0
@@ -373,6 +495,13 @@ class Being:
                 if target:
                     self.state.approach(target, rate=rate, set_labels=False)
                 self._relabel()
+
+            if pending:                     # real input also shapes the evolving body
+                for sn in sensations:
+                    try:
+                        self.morph.imprint(self.state, sn, self._impact, weight=0.6)
+                    except Exception:
+                        pass
 
             # only a real crossing changes the body — and only then does it announce
             # to the group and ask for music. Most of the time nothing changes.
@@ -414,6 +543,7 @@ class Being:
             self._last_style = {}
             self._body_since = time.time()
         self.expr.set_render(fn, f"composed#{self._style_i}", dur=max(0.4, dur))
+        self._cur_spec, self._cur_form_name, self._cur_learnable = glyph, (name or "a vision"), True
         self._hold_until = time.time() + 10
 
     def _express_pixels(self, spec: dict, name: str = "a drawing", dur: float = 1.2):
@@ -426,7 +556,31 @@ class Being:
             self._last_style = {}
             self._body_since = time.time()
         self.expr.set_render(fn, f"pixels#{self._style_i}", dur=max(0.4, dur))
+        self._cur_spec, self._cur_learnable = None, False   # pixel bitmaps use a different renderer
         self._hold_until = time.time() + 10
+
+    def _maybe_learn(self):
+        """If the being has HELD its current composed form long enough, consolidate it into
+        the repertoire, tagged with this mood — so it can deliberately return to it later."""
+        if not (self._cur_learnable and isinstance(self._cur_spec, dict)
+                and self._cur_spec.get("layers")):
+            return
+        if time.time() - self._body_since < self._learn_hold:
+            return
+        try:
+            if self.library.learn(self._cur_form_name or "form", self._cur_spec, self.state):
+                self._cur_learnable = False        # learn each held form once
+        except Exception:
+            pass
+
+    def _recent_nouns(self):
+        """Words from the recent talk, so an invented symbol can obliquely reach for what
+        was mentioned (a 'sea' may surface a wave) — never a literal illustration of it."""
+        import re
+        words = []
+        for line in list(self._convo)[-4:]:
+            words += re.findall(r"[a-zA-Z']+", line.lower())
+        return tuple(words[-24:])
 
     def _relabel(self):
         """Name the mood from its (inertial) scalars, not from any single message."""
@@ -443,19 +597,34 @@ class Being:
         dom = self.state.dominant_emotion
         if dom == self._last_expr_dom:
             return False
-        name = (decision.emblem if (decision and emblem_registry.get(decision.emblem))
-                else emblem_registry.pick(self.state)[0])
+        import random
         self._style_i += 1
-        style = styled.style_for(self.state, self._style_i)
         dur = 1.0 + 1.2 * (1 - self.state.coherence)
+        # if the mind named an emblem, honor it; otherwise usually INVENT a fresh symbol
+        # from the new feeling (recognizable but unique), sometimes a fixed emblem.
+        learn_spec = None
+        if decision and emblem_registry.get(decision.emblem):
+            name = decision.emblem
+            style = styled.style_for(self.state, self._style_i)
+            fn = styled.make_styled(name, style)
+        elif random.random() < 0.6:
+            name, spec = invent(self.state, memory_words=self._recent_nouns())
+            self.library.remember(name, spec)
+            style = {}
+            fn = (lambda buf, t, g=spec: render_glyph(buf, g, t))
+            learn_spec = spec
+        else:
+            name = emblem_registry.pick(self.state)[0]
+            style = styled.style_for(self.state, self._style_i)
+            fn = styled.make_styled(name, style)
         with self._lock:
             self._glyph_name = name
             self._last_style = style
             self._body_since = time.time()
-        self.expr.set_render(styled.make_styled(name, style), f"{name}#{self._style_i}", dur=dur)
+        self.expr.set_render(fn, f"{name}#{self._style_i}", dur=dur)
+        self._cur_spec, self._cur_form_name, self._cur_learnable = learn_spec, name, bool(learn_spec)
         self._last_expr_dom = dom
         if announce and self.on_event:
-            from .music import lyria_prompt
             utter = (decision.utterance if (decision and decision.utterance)
                      else f"something in me shifted — i feel {dom} now.")
             try:
@@ -463,7 +632,7 @@ class Being:
                                "invite": self._gate_invite(decision.invite_to_look if decision else False),
                                "music_wish": (decision.music_wish if decision else "") or "",
                                "dominant": dom, "proactive": True, "genuine": True,
-                               "lyria_prompt": lyria_prompt(self.state)})
+                               "lyria_prompt": self._lyria_prompt()})
             except Exception:
                 pass
         return True

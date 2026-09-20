@@ -112,27 +112,68 @@ def invent(state, words=(), memory_words=()):
 
 
 class Library:
-    """Invented glyphs persist here, so the being's repertoire grows with interaction."""
+    """The being's growing repertoire. Two tiers:
+      * glyphs  — every symbol it has ever composed (a big loose bag).
+      * forms   — symbols it HELD long enough to truly learn, each tagged with the mood it
+                  was in. These it can deliberately RETURN to when it feels that way again,
+                  the way a person falls back into a familiar expression.
+    """
 
     def __init__(self, path):
         self.path = path
         self.glyphs = {}
+        self.forms = []          # [{name, spec, mood:{dominant,valence,arousal,curiosity}}]
         try:
             with open(path) as fh:
-                self.glyphs = json.load(fh)
+                data = json.load(fh)
+            if isinstance(data, dict) and ("glyphs" in data or "forms" in data):
+                self.glyphs = data.get("glyphs", {}) or {}
+                self.forms = data.get("forms", []) or []
+            elif isinstance(data, dict):
+                self.glyphs = data           # legacy: a plain dict of name -> glyph
         except (OSError, ValueError):
-            self.glyphs = {}
+            pass
 
     def remember(self, name, glyph):
         if name not in self.glyphs:
             self.glyphs[name] = glyph
+
+    def learn(self, name, spec, state):
+        """Consolidate a form the being held long enough, tagged with the current mood, so
+        it can be recalled later. Idempotent by name; keeps the most recent ~60."""
+        if any(f.get("name") == name for f in self.forms):
+            return False
+        self.forms.append({"name": name, "spec": spec, "mood": {
+            "dominant": getattr(state, "dominant_emotion", ""),
+            "valence": round(getattr(state, "valence", 0.5), 3),
+            "arousal": round(getattr(state, "arousal", 0.5), 3),
+            "curiosity": round(getattr(state, "curiosity", 0.5), 3)}})
+        self.forms = self.forms[-60:]
+        return True
+
+    def recall(self, state, jitter=0.12):
+        """Return (name, spec) of a learned form whose mood is closest to how it feels now
+        (a little randomized, so it doesn't always snap to the same one). None if empty."""
+        import random
+        if not self.forms:
+            return None
+        def dist(f):
+            m = f.get("mood", {})
+            d = (abs(m.get("valence", 0.5) - state.valence)
+                 + abs(m.get("arousal", 0.5) - state.arousal)
+                 + 0.5 * abs(m.get("curiosity", 0.5) - getattr(state, "curiosity", 0.5)))
+            if m.get("dominant") and m["dominant"] == state.dominant_emotion:
+                d -= 0.4                                   # same named mood pulls strongly
+            return d + random.uniform(0, jitter)
+        f = min(self.forms, key=dist)
+        return f["name"], f["spec"]
 
     def save(self):
         if not self.path:
             return
         os.makedirs(os.path.dirname(self.path), exist_ok=True)
         with open(self.path, "w") as fh:
-            json.dump(self.glyphs, fh)
+            json.dump({"glyphs": self.glyphs, "forms": self.forms}, fh)
 
     def __len__(self):
         return len(self.glyphs)

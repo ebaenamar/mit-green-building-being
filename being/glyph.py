@@ -55,6 +55,12 @@ def _anim_offset(p, t):
         return 0, 0, 1, 0.4 + 0.6*(math.sin(t*4*sp)*0.5+0.5)
     if kind == "flicker":
         return 0, 0, 1, 0.7 + 0.3*_noise(int(t*12*sp), 5),
+    if kind == "blink":
+        # a lid drawn only during a brief, periodic close (alpha 1 = eye shut). Every
+        # ~3.4s the eye blinks for a fraction of a second; occasionally a double blink.
+        ph = (t*0.5*sp) % 1.0
+        shut = ph < 0.06 or (0.12 < ph < 0.17)
+        return 0, 0, 1, (1.0 if shut else 0.0)
     return 0, 0, 1, 1
 
 
