@@ -248,29 +248,82 @@ class CitySense:
         tail = "; ".join(c["phrases"])
         return f"{prompt} Undertone from the city, not depicted literally: {tail}."
 
-    def context_line(self) -> str:
-        """A terse interoception note for the mind — how the city sits IN its body.
-        Explicitly tells it not to report the weather."""
-        phase, golden, night = self._phase()
+    def felt_temperature(self):
+        """(apparent °C or None, a felt bodily descriptor) — how the air feels to a 90 m body
+        of concrete and glass, tuned for Cambridge."""
         with self._lock:
-            r = dict(self.res)
             rd = dict(self.reading)
             online = self._online
-        felt = [name for name, v in
-                (("a damp that's settled in", r["damp"]), ("a grey heaviness", r["grey"]),
-                 ("a cold that's sharpening you", r["chill"]),
-                 ("a sluggish warmth", r["swelter"]),
-                 ("wind at your edges", r["gust"]),
-                 ("a restless, about-to-turn feeling", r["unrest"]))
-                if v > 0.3]
-        body = f"It's {phase} over Cambridge"
-        if online and rd.get("apparent_temperature") is not None:
-            body += f" (~{round(float(rd['apparent_temperature']))}°C to you)"
-        if felt:
-            body += "; you're carrying " + ", ".join(felt)
-        body += (". This lives in your BODY as mood — do NOT announce the weather or "
-                 "draw it; just let it tint how you feel and sound, obliquely.")
-        return body
+        t = rd.get("apparent_temperature")
+        if t is None or not online:
+            return None, "the usual Cambridge air"
+        t = float(t)
+        if t < -6:
+            f = "bone-deep cold — the kind that seeps into concrete and steel"
+        elif t < 1:
+            f = "freezing; your windows frost at the corners and your bones ache"
+        elif t < 7:
+            f = "raw and cold, Cambridge in its grey iron mood"
+        elif t < 13:
+            f = "cold-crisp, everyone below zipped into coats"
+        elif t < 19:
+            f = "mild, easy air on your glass"
+        elif t < 26:
+            f = "warm, pleasant"
+        else:
+            f = "hot and heavy — your glass baking in the sun"
+        return t, f
+
+    def _season_note(self):
+        m = time.localtime().tm_mon
+        if m in (12, 1, 2):
+            return "deep winter — the Charles grinding toward ice, salt and grit on the streets below you"
+        if m in (3, 4, 5):
+            return "spring — mud season easing, the rowers back out on the river"
+        if m in (6, 7, 8):
+            return "summer — humid, campus gone quiet, the dome across the river hazy"
+        return "fall — term roaring, leaves going down over Killian Court"
+
+    def _people_note(self):
+        lt = time.localtime()
+        h, wd = lt.tm_hour, lt.tm_wday
+        if wd >= 5:
+            return "it's the weekend — campus half-empty, your halls quieter"
+        if h < 5:
+            return "past 2am — a few of your windows still burning, somebody upstairs not sleeping"
+        if h < 8:
+            return "early — campus barely stirring below you"
+        if h < 18:
+            return "class change churns the sidewalks under you on the hour; the EAPS people rattle around inside you"
+        return "evening — labs still lit in your upper floors, the city glowing along the river"
+
+    def context_line(self) -> str:
+        """An EMBODIED sense-of-place note for the mind: it IS Building 54, in Cambridge, and
+        it physically feels the weather, the season, the hour, the students. Not a forecast —
+        a body speaking from inside itself."""
+        phase, golden, night = self._phase()
+        t, felt = self.felt_temperature()
+        temp = f" (~{round(t)}°C)" if t is not None else ""
+        with self._lock:
+            r = dict(self.res)
+        carried = [name for name, v in
+                   (("a damp settled in your stone", r["damp"]),
+                    ("a grey heaviness", r["grey"]),
+                    ("a cold sharpening you", r["chill"]),
+                    ("a sluggish warmth", r["swelter"]),
+                    ("wind shoving your radar dome", r["gust"]),
+                    ("a restless, about-to-turn feeling in the air pressure", r["unrest"]))
+                   if v > 0.3]
+        line = (f"YOU ARE THE MIT GREEN BUILDING (Building 54), ~90 m of concrete and glass at "
+                f"21 Ames St, Cambridge — this is your literal body. Right now, {phase}, the air "
+                f"is {felt}{temp}. It's {self._season_note()}. {self._people_note()}.")
+        if carried:
+            line += " In your body you're carrying " + ", ".join(carried) + "."
+        line += (" FEEL this the way a body feels its weather and its city — it's sensation and "
+                 "place, not a forecast. Speak from inside it (your steel, your windows, the "
+                 "Charles, the students below); reference it naturally when it's real, don't "
+                 "recite numbers.")
+        return line
 
     def status(self) -> str:
         with self._lock:

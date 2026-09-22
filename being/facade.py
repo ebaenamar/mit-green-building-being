@@ -55,22 +55,33 @@ def render_wash(buf, state, drives=None, city=None, t=0.0, event=None):
         lonely = _clamp(getattr(drives, "social", 0.3) - 0.5) * 2
         bored = _clamp(getattr(drives, "stimulation", 0.3) - 0.55) * 2
         bright -= 0.22 * lonely                         # lonely -> withdraw, dim
-    golden = night = unrest = 0.0
+    golden = night = unrest = chill = swelter = 0.0
     if city is not None:
         try:
             _p, golden, night = city._phase()
             unrest = city.res.get("unrest", 0.0)
+            chill = city.res.get("chill", 0.0)
+            swelter = city.res.get("swelter", 0.0)
         except Exception:
             pass
     bright -= 0.30 * night                              # deep night -> dim, pulled inward
     bright += 0.16 * golden                             # golden hour -> warm bloom
+    bright -= 0.12 * chill                              # cold -> it contracts, dims a touch
+    # the cold is VISIBLE: the whole facade pulls toward icy blue and its glass frosts
+    if chill > 0.2:
+        r = r + (0.55 - r) * 0.5 * chill
+        g = g + (0.72 - g) * 0.5 * chill
+        b = b + (0.98 - b) * 0.5 * chill
+    if swelter > 0.2:                                   # heat -> ruddy, heavy
+        r = min(1.0, r + 0.2 * swelter)
+        g = g * (1 - 0.12 * swelter)
     bright = _clamp(bright, 0.05, 1.0)
 
     breath = 0.84 + 0.16 * math.sin(t * 1.6)            # always-on breathing = baseline of alive
     field = np.ones((ROWS, COLS)) * bright * breath * _GRAD
 
-    # restless shimmer: high arousal, overload, or a barometer about to turn (pre-storm)
-    agit = _clamp(max(a - 0.6, 0) * 2 + 0.8 * unrest + 0.6 * sat)
+    # restless shimmer: high arousal, overload, pre-storm — or a faint cold shiver
+    agit = _clamp(max(a - 0.6, 0) * 2 + 0.8 * unrest + 0.6 * sat + 0.4 * chill)
     if agit > 0.02:
         ph = int(t * 11)
         noise = np.array([[((math.sin(rr * 12.9 + cc * 78.2 + ph * 37.7) * 43758.5) % 1.0)
