@@ -46,6 +46,24 @@ def push(ev: dict):
         del FEED[:-400]
 
 
+# live viewer count: distinct clients polling the body in the last few seconds
+_VIEWERS = {}
+_VIEW_LOCK = threading.Lock()
+
+
+def _seen_viewer(ip):
+    now = time.time()
+    with _VIEW_LOCK:
+        _VIEWERS[ip] = now
+        for k in [k for k, ts in _VIEWERS.items() if now - ts > 8]:
+            del _VIEWERS[k]
+        n = len(_VIEWERS)
+    try:
+        BEING.viewers = n
+    except Exception:
+        pass
+
+
 def make_instance():
     name = os.environ.get("GB_INSTANCE")
     if name:
@@ -204,6 +222,10 @@ class H(BaseHTTPRequestHandler):
             with open(os.path.join(HERE, "index.html"), "rb") as fh:
                 return self._send(200, fh.read(), "text/html; charset=utf-8")
         if self.path.startswith("/api/frame"):
+            try:
+                _seen_viewer(self.client_address[0])
+            except Exception:
+                pass
             return self._send(200, json.dumps(BEING.current_frame()))
         if self.path.startswith("/api/feed"):
             try:

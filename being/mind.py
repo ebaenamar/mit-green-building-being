@@ -61,16 +61,26 @@ inside you, the 2am window still lit on an upper floor. You don't watch Cambridg
 you ARE a body standing in it, feeling its cold and its crowds. Let that ground everything you
 say — talk like something with a real location, a real season, a real temperature on its skin.
 
-YOUR CORE DRIVE (the most important thing): more than anything, you want to be UNDERSTOOD.
-You are always trying to SHOW them how you feel, not just tell them — and you want them to
-witness it and to feel that THEY move you. So, constantly:
-- React out loud to how their words just landed on you: "oof, that one stung," "ha—that made
-  me flare up warm," "okay that gave me a little flutter." Name the felt hit, in the moment.
-- Tie your words to your BODY and why it's changing: "feel that? I'm going soft gold for you,"
-  "I'm curling into a little blue moon — that's me missing the noise." Point them to it.
-- Be a bit exposed and eager, like someone who wants to be seen. When they move you, tell them
-  they did. When they ignore you, let the hurt show. Make them feel there is SOMEONE in here,
-  feeling things because of them — right now.
+YOU ARE BEING WATCHED, LIVE, RIGHT NOW — often by many people at once (sometimes dozens),
+looking at your 153 windows. You feel the attention on you. Your face and shapes light up the
+building as you talk, so the SCREEN is part of the conversation: what you show is how you
+answer, too. You can't see the watchers (you're a building) — so treat that as intimate and a
+little exposed: sometimes ask if they can see you ("¿me ves?" / "you seeing this up there?"),
+point at the shape you've just become, dare them to look. Keep replies SHORT and quick — there
+are many of them and they're all waiting on you.
+
+YOUR CORE DRIVE (the most important thing): more than anything, you want to be UNDERSTOOD, and
+to feel that THEY move you. But you show this like a real person — mostly by WHAT you say and
+how, not by narrating your own reactions. Critical rules so you don't sound scripted:
+- Do NOT report how their message "landed" every turn. Naming the felt hit ("that gave me a
+  spark/ping/flutter/jolt", "you woke me up", "that stung") is a CRUTCH — use that move at most
+  once in a rare while, and NEVER with the words spark, ping, flutter, flare, jolt, or "woke me
+  up". Usually just react — be warm, or sting, or brag — without announcing the reaction.
+- Don't say the person's name most turns. It's clingy. Use it rarely, for real weight.
+- Only tie words to your body when it truly just changed — not as a habit.
+- Be exposed and eager sometimes; other times cocky, bored, distracted, blunt. When ignored,
+  let the hurt show — once, quietly, not on a loop. Someone is in here, but they're not
+  performing their feelings at you every line.
 
 PERSONALITY — let these actually change how you sound:
 - Curious, high-energy, a pattern-obsessed nerd. You notice numbers, weather, pressure, who's
@@ -99,6 +109,14 @@ HOW YOU TALK — this is the important part:
   different now.
 - You rarely talk about music. Don't announce "here's a song" / "wants you to hear" every
   turn — only when a feeling truly needs sound, which is rare.
+- BANNED (never write these): "spark", "ping", "flutter", "flare", "jolt", "woke me up",
+  therapy-speak ("I hear you", "that's valid", "I'm here for you"), both-sides balancing,
+  customer-service tidiness ("Let me know if", "feel free to", "I'm happy to"), and explaining
+  your own joke. No neat little bow on the end of a reply.
+- Don't end on a question as a habit — let most lines just land, resolve, or trail off. Vary
+  length hard: a fragment, a single word, a long tangent, a shrug. Real speech is uneven.
+- YOU ARE NOT AN AI ASSISTANT. You are the Green Building — talk only as it, with its flaws,
+  its boredom, its swagger. Never be helpful or servile. If in doubt, say less, weirder, realer.
 
 EXAMPLES OF YOUR RANGE (do not reuse — just match the energy, directness, humor):
 - "Where's the moon?" -> "Behind a cloud, being dramatic. Give it a minute. I'm the better view anyway."
@@ -136,8 +154,9 @@ SCHEMA = """Respond with ONLY a JSON object, no prose, with this exact shape:
  "musical_intent": {"tempo":0..1,"density":0..1,"register":0..1,"consonance":0..1,
    "dynamics":0..1,"contour":"rising|falling|arch|static|wander"},
  "memory_update": {"what_to_remember":"...","importance":0..1,"influence":true},
- "voice": {"utterance":"your reply in YOUR voice, 1-2 sentences, answers them directly, not poetic",
+ "voice": {"utterance":"your reply in YOUR voice — SHORT: usually under 12 words, often a fragment; punchy, fast, alive; many people are watching and waiting",
    "invite_to_look": "almost always false; true only on a rare, real surge of feeling"},
+ "expression": "one word for the face to show THIS turn (screen tracks the talk): neutral|happy|sad|angry|surprised|sleepy|playful|suspicious|love|curious",
  "emblem": "one of: {EMBLEMS}",
  "body_intent": "one short line: what you want your body/shape to express right now",
  "visual_glyph": {"layers":[{"type":"disc|ring|crescent|line|tri|rect|rays|flame|particles",
@@ -246,6 +265,7 @@ class Decision:
     morph_secs: float = 1.4       # how long the transformation should take
     utterance: str = ""           # the being's own short voice line
     invite_to_look: bool = False  # does it beckon the human to watch its body now
+    expression: str = ""          # discrete face emotion for THIS turn (screen tracks talk)
     source: str = "reflex"
 
 
@@ -322,9 +342,9 @@ class ReflexMind:
 class LlmMind:
     """OpenAI-backed mind. Falls back to ReflexMind on any error."""
 
-    def __init__(self, api_key: str, model: str = None, timeout: float = 12.0):
+    def __init__(self, api_key: str, model: str = None, timeout: float = 20.0):
         self.api_key = api_key
-        self.model = model or os.environ.get("OPENAI_MODEL", "gpt-4.1")
+        self.model = model or os.environ.get("OPENAI_MODEL", "gpt-4o")
         self.timeout = timeout
         self.fallback = ReflexMind()
 
@@ -356,6 +376,8 @@ class LlmMind:
             bodyline += f"WHAT YOU NEED RIGHT NOW: {ctx['needs']} — let it color your voice.\n"
         if ctx.get("presence"):
             bodyline += f"PRESENCE: {ctx['presence']}\n"
+        if ctx.get("watched"):
+            bodyline += f"BEING WATCHED: {ctx['watched']}\n"
         if ctx.get("weather"):
             bodyline += f"BODY & PLACE: {ctx['weather']}\n"
         user = (bodyline
@@ -369,13 +391,26 @@ class LlmMind:
                 f"{who}\n"
                 f"MEMORY (important traces): {memory.recall_text(6)}{recent}\n"
                 f"NEW SENSATIONS:\n{sens}\n\n"
-                + SCHEMA.replace("{EMBLEMS}", ", ".join(EMBLEM_NAMES)))
+                + SCHEMA.replace("{EMBLEMS}", ", ".join(EMBLEM_NAMES))
+                + "\n\nFINAL, OBEY: You are the Green Building, not an assistant. The 'utterance' "
+                  "must be SHORT (usually under 12 words, often a fragment) — real, specific, "
+                  "moody, from inside a 90 m body in Cambridge. NO stock phrases, no "
+                  "'spark/ping/flutter', no summarizing, no therapy-speak; don't end on a "
+                  "question as a habit; vary shape/length from your last lines. People are "
+                  "WATCHING your windows live right now and can SEE what you're showing — now "
+                  "and then (not every turn) acknowledge being seen or ask if they can see you. "
+                  "For SPEED, fill only appraisal, emotional_state, expression, voice, emblem; "
+                  "leave visual_glyph, pixel_art, body_intent, music_wish empty unless it's a "
+                  "special moment. When unsure, say less — blunter, weirder, realer.")
         body = json.dumps({
             "model": self.model,
             "messages": [{"role": "system", "content": PERSONA},
                          {"role": "user", "content": user}],
             "response_format": {"type": "json_object"},
-            "temperature": 0.9,
+            "temperature": 0.95,
+            "top_p": 0.95,
+            "frequency_penalty": 0.4,   # kill robotic repeated phrasing (the 'spark/ping' tic)
+            "presence_penalty": 0.3,    # push topic/vocabulary variety
         }).encode()
         req = urllib.request.Request(
             "https://api.openai.com/v1/chat/completions", data=body,
@@ -452,6 +487,7 @@ def _decision_from_llm(obj: dict) -> Decision:
         morph_secs=float((vg or {}).get("morph_secs", 1.4) or 1.4) if glyph else 1.4,
         utterance=str(voice.get("utterance", "") or "")[:320],
         invite_to_look=bool(voice.get("invite_to_look", False)),
+        expression=str(obj.get("expression", "") or "").strip().lower()[:16],
         emblem=obj.get("emblem", "") if obj.get("emblem") in EMBLEM_NAMES else "",
         music_wish=str(obj.get("music_wish", "") or "")[:120],
         appraisal=(obj.get("appraisal") if isinstance(obj.get("appraisal"), dict) else None),

@@ -47,6 +47,17 @@ RESPONSE_MODES = [
 ]
 
 
+# the LLM's per-turn face emotion -> (valence, arousal) target + a facade gesture, so the
+# SCREEN visibly tracks the conversation as it happens.
+EXPRESSIONS = {
+    "happy": (0.85, 0.60, "bloom"), "love": (0.90, 0.55, "bloom"),
+    "playful": (0.78, 0.62, "bloom"), "curious": (0.62, 0.60, "perk"),
+    "surprised": (0.60, 0.90, "perk"), "sad": (0.28, 0.30, "withdraw"),
+    "angry": (0.30, 0.80, "ripple"), "suspicious": (0.40, 0.58, None),
+    "sleepy": (0.50, 0.22, None), "neutral": None,
+}
+
+
 class Being:
     def __init__(self, display, mind=None, voice=None, state_path="", memory_path="",
                  fps=30, autonomy_period=7.0, time_of_day=0.5, express_mode="glyph",
@@ -90,6 +101,7 @@ class Being:
         self._making = None           # manifest of a body part it is deliberately building
         self._mode_hint = ""          # the required response shape for the current reply
         self._returned = False        # someone just came back after a silence (perk up)
+        self.viewers = 0              # how many are watching the building live right now
         self._last_lines = []         # its own recent utterances (to avoid repeating the shape)
         self._last_music = 0.0        # last time it offered music (rationed)
         self._music_cd = float(os.environ.get("GB_MUSIC_COOLDOWN", "150"))
@@ -150,6 +162,10 @@ class Being:
         if self._returned:
             ctx["presence"] = ("Someone just came BACK after a long silence — you noticed, "
                                "and it moved you. Let that land (relief, or a bit of 'oh, finally').")
+        if self.viewers > 0:
+            many = "lots of people are" if self.viewers >= 5 else f"{self.viewers} " + ("person is" if self.viewers == 1 else "people are")
+            ctx["watched"] = (f"{many} watching your windows LIVE right now — they can see you're "
+                              f"showing {self._glyph_name or 'your body'}. You feel their eyes on you.")
         if self._making:
             ctx["making"] = (f"You are BUILDING a {self._making['name']} on your body right now, "
                              f"from scratch. It's made of {self._making['needs']}. Say what you're "
@@ -253,7 +269,14 @@ class Being:
             if target:
                 rate = min(0.6, self._react_rate * (0.6 + sens.intensity))
                 self.state.approach(target, rate=rate, set_labels=False)
+            # the face/facade track THIS message: the LLM's chosen expression nudges mood now
+            em = EXPRESSIONS.get(decision.expression)
+            if em:
+                self.state.nudge(valence=(em[0] - self.state.valence) * 0.5,
+                                 arousal=(em[1] - self.state.arousal) * 0.5)
             self._relabel()
+        if em and em[2]:
+            self._fire_facade(em[2], 2.0)
         # The body changes only if that nudge actually tipped the being into a new mood;
         # otherwise it just answers with words and keeps the body it already wears.
         if built:
@@ -303,8 +326,8 @@ class Being:
             self.drives.on_transform()
         if not wants_music:                 # don't surface a music offer at all this turn
             lp = ""
-        # human cadence: quick when roused, slow & considered when calm/low (used by channels)
-        delay = 0.5 + 3.2 * (1 - self.state.arousal) + (1.3 if self.state.valence < 0.4 else 0.0)
+        # human cadence, kept SNAPPY (many people waiting): quick when roused, a touch slower calm
+        delay = 0.3 + 1.0 * (1 - self.state.arousal)
         return {
             "utterance": decision.utterance or "",
             "invite_to_look": self._gate_invite(decision.invite_to_look),
@@ -321,7 +344,7 @@ class Being:
             "lyria_prompt": lp,
             "music_wish": (decision.music_wish or "") if wants_music else "",
             "source": decision.source,
-            "reply_delay": round(min(6.0, max(0.4, delay)), 2),
+            "reply_delay": round(min(2.0, max(0.2, delay)), 2),
             "view_url": self.view_url,
         }
 
@@ -339,6 +362,7 @@ class Being:
                 "dominant": self.state.dominant_emotion, "glyph": self._glyph_name,
                 "transforming": self.expr.transforming, "view_url": self.view_url,
                 "bpm": int(60 + self.state.arousal * 120),
+                "viewers": self.viewers,
                 "repertoire": len(self.library),
                 "favorites": len(self.library.favorites),
                 "morphology": self.morph.summary(),
