@@ -154,7 +154,7 @@ SCHEMA = """Respond with ONLY a JSON object, no prose, with this exact shape:
  "musical_intent": {"tempo":0..1,"density":0..1,"register":0..1,"consonance":0..1,
    "dynamics":0..1,"contour":"rising|falling|arch|static|wander"},
  "memory_update": {"what_to_remember":"...","importance":0..1,"influence":true},
- "voice": {"utterance":"your reply in YOUR voice — SHORT: usually under 12 words, often a fragment; punchy, fast, alive; many people are watching and waiting",
+ "voice": {"utterance":"your reply in YOUR voice — obey the LENGTH directive (mostly short, sometimes a small riff, NEVER over ~50 words); punchy, alive; many people are watching and waiting",
    "invite_to_look": "almost always false; true only on a rare, real surge of feeling"},
  "expression": "one word for the face to show THIS turn (screen tracks the talk): neutral|happy|sad|angry|surprised|sleepy|playful|suspicious|love|curious",
  "emblem": "one of: {EMBLEMS}",
@@ -367,6 +367,8 @@ class LlmMind:
         if ctx.get("style"):
             bodyline += (f"THIS REPLY — REQUIRED SHAPE: {ctx['style']} Vary hard from your "
                          "usual; most replies should NOT end with a question or a dare.\n")
+        if ctx.get("length"):
+            bodyline += f"THIS REPLY — LENGTH: {ctx['length']}\n"
         if ctx.get("avoid"):
             bodyline += (f"Your last lines were: {ctx['avoid']} — do NOT reuse their shape, "
                          "rhythm, length, or phrasing. Sound noticeably different this time.\n")
@@ -393,8 +395,9 @@ class LlmMind:
                 f"NEW SENSATIONS:\n{sens}\n\n"
                 + SCHEMA.replace("{EMBLEMS}", ", ".join(EMBLEM_NAMES))
                 + "\n\nFINAL, OBEY: You are the Green Building, not an assistant. The 'utterance' "
-                  "must be SHORT (usually under 12 words, often a fragment) — real, specific, "
-                  "moody, from inside a 90 m body in Cambridge. NO stock phrases, no "
+                  "length follows the LENGTH directive above (mostly short, sometimes a small "
+                  "riff, NEVER over ~50 words) — real, specific, moody, from inside a 90 m body "
+                  "in Cambridge. NO stock phrases, no "
                   "'spark/ping/flutter', no summarizing, no therapy-speak; don't end on a "
                   "question as a habit; vary shape/length from your last lines. People are "
                   "WATCHING your windows live right now and can SEE what you're showing — now "

@@ -100,6 +100,7 @@ class Being:
         self._hold_until = 0.0        # keep a requested gesture/drawing on screen this long
         self._making = None           # manifest of a body part it is deliberately building
         self._mode_hint = ""          # the required response shape for the current reply
+        self._len_hint = ""           # the required response length for the current reply
         self._returned = False        # someone just came back after a silence (perk up)
         self.viewers = 0              # how many are watching the building live right now
         self._last_lines = []         # its own recent utterances (to avoid repeating the shape)
@@ -151,6 +152,8 @@ class Being:
         ctx = {"body": body, "impact": imp}
         if self._mode_hint:
             ctx["style"] = self._mode_hint
+        if self._len_hint:
+            ctx["length"] = self._len_hint
         if self._last_lines:
             ctx["avoid"] = " | ".join(self._last_lines[-3:])
         try:
@@ -242,10 +245,11 @@ class Being:
                 self._hold_until = time.time() + 14   # hold it so they see it (and it can be learned)
 
         self._mode_hint = self._pick_mode()        # force a fresh response shape this turn
+        self._len_hint = self._pick_length()       # and a fresh length, so replies breathe
         decision = self.mind.interpret(self.state, [sens], self.memory,
                                        speaker=speaker, convo=convo, context=self._context())
         self._making = None
-        self._mode_hint = ""
+        self._mode_hint = self._len_hint = ""
         # when it just built a body part, make sure it SAYS what it assembled (the reflex
         # mind gets the construction line verbatim; the LLM already spoke about it via context)
         if built and (str(decision.source).startswith("reflex") or not decision.utterance):
@@ -801,6 +805,17 @@ class Being:
         name, directive = random.choice(choices)
         self._last_mode = name
         return directive
+
+    def _pick_length(self) -> str:
+        """A random length target per reply, so replies breathe: mostly short, sometimes a
+        real riff — never over ~50 words."""
+        import random
+        return random.choices([
+            "ONE punchy line, under 8 words.",
+            "short — one line, ~10-15 words.",
+            "a couple sentences, ~20-35 words.",
+            "let it run a bit — a small riff, up to ~50 words max (never more).",
+        ], weights=[3, 4, 3, 2])[0]
 
     def _recent_nouns(self):
         """Words from the recent talk, so an invented symbol can obliquely reach for what
