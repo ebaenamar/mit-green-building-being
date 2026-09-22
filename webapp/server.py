@@ -223,7 +223,9 @@ class H(BaseHTTPRequestHandler):
                 return self._send(200, fh.read(), "text/html; charset=utf-8")
         if self.path.startswith("/api/frame"):
             try:
-                _seen_viewer(self.client_address[0])
+                xff = self.headers.get("X-Forwarded-For", "")
+                ip = xff.split(",")[0].strip() if xff else self.client_address[0]
+                _seen_viewer(ip)
             except Exception:
                 pass
             return self._send(200, json.dumps(BEING.current_frame()))
