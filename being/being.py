@@ -302,8 +302,16 @@ class Being:
             body_changed = True
         elif self.express_mode == "glyph":
             # DEFAULT for a normal message: the face visibly REACTS with the felt emotion and
-            # holds, so you see it responding to YOU — not ambient shape-shifting.
-            self._react_face(decision.expression)
+            # holds, so you see it responding to YOU — not ambient shape-shifting. A strong
+            # emotional tone in what they SAID drives an empathic face over its default mood.
+            felt = None
+            if sens.valence_tone < 0.45:
+                felt = "sad" if sens.energy_tone < 0.55 else "angry"
+            elif sens.valence_tone > 0.60:
+                felt = "happy"
+            elif sens.energy_tone > 0.80:
+                felt = "surprised"
+            self._react_face(decision.expression, felt)
             body_changed = False
         else:
             body_changed = False
@@ -789,10 +797,12 @@ class Being:
         self._cur_spec, self._cur_learnable = None, False   # pixel bitmaps use a different renderer
         self._hold_until = time.time() + 10
 
-    def _react_face(self, expression: str):
+    def _react_face(self, expression: str, felt: str = None):
         """Show a crisp emotional FACE reacting to the message just received, and hold it so the
-        interaction READS as a felt reaction (not ambient morphing)."""
-        mode = FACE_MODE.get(expression or "", None)
+        interaction READS as a felt reaction (not ambient morphing). A strong emotional tone in
+        what they SAID (felt) wins over the being's default mood — that's empathy, and it's what
+        makes the reaction land as 'it felt what I told it'."""
+        mode = felt or FACE_MODE.get(expression or "", None)
         try:
             fn, _m = anatomy.face_render(self.state, self.morph.express("face", self.state),
                                          mode_override=mode)

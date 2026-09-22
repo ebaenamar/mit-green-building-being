@@ -10,14 +10,28 @@ from dataclasses import dataclass, field
 
 _POS = set(("love like joy happy warm gentle beautiful calm peace kind hello hi friend "
             "wonderful yes please thanks thank soft bright sweet good great amazing "
-            "missed glow together close home welcome play playful").split())
+            "missed glow together close home welcome play playful "
+            # español
+            "amor amo quiero feliz contento contenta alegre alegria gracias bonito linda "
+            "lindo hermoso hermosa genial increible bien bueno buena abrazo cariño hola "
+            "encanta guay chulo maravilloso").split())
 _NEG = set(("hate angry fear dark cold cruel sad lonely alone pain hurt no stop bad "
             "afraid scared tired sick death die empty lost broken danger chasing chase "
-            "threat monster enemy attack help careful").split())
+            "threat monster enemy attack help careful "
+            # español
+            "triste tristeza solo sola miedo dolor mal malo odio llorar lloro muerte "
+            "muerto cansado cansada enfermo enferma perdido perdida roto rota adios harto "
+            "harta asustado asustada asusta susto preocupado preocupada vacio vacia solo").split())
 _HIGH = set(("run fast now loud jump fight chase chasing burn explode wild storm scream "
-             "chaos dance quick hurry go energy danger voices shout many attack play").split())
+             "chaos dance quick hurry go energy danger voices shout many attack play "
+             # español
+             "corre rapido ahora grita fuego fiesta baila energia peligro muchos ataca "
+             "susto asusta asustaste vamos salta").split())
 _LOW = set(("slow quiet rest sleep still hush whisper calm gentle drift float wait "
-            "breathe soft dim cold empty dark alone lonely tired numb faint weak heavy").split())
+            "breathe soft dim cold empty dark alone lonely tired numb faint weak heavy "
+            # español
+            "lento quieto duerme calma suave frio vacio oscuro cansado triste solo "
+            "silencio descansa").split())
 # words that pull attention toward the unknown, and words that signal a sensory din
 _CURIO = set(("wonder hidden secret mystery what why how explore inside discover unknown "
               "curious question strange").split())

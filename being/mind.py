@@ -156,7 +156,7 @@ SCHEMA = """Respond with ONLY a JSON object, no prose, with this exact shape:
  "memory_update": {"what_to_remember":"...","importance":0..1,"influence":true},
  "voice": {"utterance":"your reply in YOUR voice — obey the LENGTH directive (mostly short, sometimes a small riff, NEVER over ~50 words); punchy, alive; many people are watching and waiting",
    "invite_to_look": "almost always false; true only on a rare, real surge of feeling"},
- "expression": "one word for the face to show THIS turn (screen tracks the talk): neutral|happy|sad|angry|surprised|sleepy|playful|suspicious|love|curious",
+ "expression": "the face your body shows THIS turn — it MUST match how the moment actually feels, NOT your default playfulness. If they share something sad/heavy, use sad; something startling, surprised; tender, love; annoying, angry. Pick from: neutral|happy|sad|angry|surprised|sleepy|playful|suspicious|love|curious",
  "emblem": "one of: {EMBLEMS}",
  "body_intent": "one short line: what you want your body/shape to express right now",
  "visual_glyph": {"layers":[{"type":"disc|ring|crescent|line|tri|rect|rays|flame|particles",
