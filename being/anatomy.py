@@ -327,9 +327,10 @@ def _draw_mouth(buf, mr, mode, pal):
         _S(buf, mr - 1, 2, m); _S(buf, mr - 1, 6, m)
 
 
-def face_render(state, params=None):
+def face_render(state, params=None, mode_override=None):
     """Return (render_fn, manifest): a crisp, expressive green creature face painted pixel by
-    pixel, whose eyes/brows/mouth reshape with feeling. Genome tweaks spacing, warmth, size."""
+    pixel, whose eyes/brows/mouth reshape with feeling. `mode_override` forces a specific
+    emotion (so the face can REACT to a message), else it reads the mood."""
     p = _P(params)
     man = {"name": "face",
            "parts": ["a head", "two eyes", "brows", "a mouth", "blush"],
@@ -339,7 +340,7 @@ def face_render(state, params=None):
     def fn(buf, t):
         buf[:] = 0.0
         pal = _face_palette(p, getattr(state, "valence", 0.6))
-        mode = _mode(state)
+        mode = mode_override or _mode(state)
         cx, cy = 4.0, 8.7
         rx = 3.1 + 0.5 * p.get("round", 0.6)
         ry = 5.9

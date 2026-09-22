@@ -56,6 +56,12 @@ EXPRESSIONS = {
     "angry": (0.30, 0.80, "ripple"), "suspicious": (0.40, 0.58, None),
     "sleepy": (0.50, 0.22, None), "neutral": None,
 }
+# expression -> the crisp face emotion to SHOW when reacting to a message
+FACE_MODE = {
+    "happy": "happy", "love": "happy", "playful": "happy", "curious": "surprised",
+    "surprised": "surprised", "sad": "sad", "angry": "angry", "suspicious": "angry",
+    "sleepy": "sleepy", "neutral": "neutral",
+}
 
 
 class Being:
@@ -294,8 +300,11 @@ class Being:
                                    name=(decision.body_intent[:24] or decision.emblem or "a vision"),
                                    dur=decision.morph_secs)
             body_changed = True
-        elif self.express_mode == "glyph" and time.time() >= self._hold_until:
-            body_changed = self._commit_if_crossed(decision, announce=False)
+        elif self.express_mode == "glyph":
+            # DEFAULT for a normal message: the face visibly REACTS with the felt emotion and
+            # holds, so you see it responding to YOU — not ambient shape-shifting.
+            self._react_face(decision.expression)
+            body_changed = False
         else:
             body_changed = False
         if decision.utterance:
@@ -400,7 +409,7 @@ class Being:
         emblem) with a visible morph — without changing how it feels."""
         import random
         while not self._stop.is_set():
-            for _ in range(int(random.uniform(13, 26))):   # change more often, feel alive
+            for _ in range(int(random.uniform(22, 42))):   # calmer ambient pace, so reactions pop
                 if self._stop.is_set():
                     return
                 self._maybe_learn()                # consolidate a form it's been holding
@@ -779,6 +788,24 @@ class Being:
         self.expr.set_render(fn, f"pixels#{self._style_i}", dur=max(0.4, dur))
         self._cur_spec, self._cur_learnable = None, False   # pixel bitmaps use a different renderer
         self._hold_until = time.time() + 10
+
+    def _react_face(self, expression: str):
+        """Show a crisp emotional FACE reacting to the message just received, and hold it so the
+        interaction READS as a felt reaction (not ambient morphing)."""
+        mode = FACE_MODE.get(expression or "", None)
+        try:
+            fn, _m = anatomy.face_render(self.state, self.morph.express("face", self.state),
+                                         mode_override=mode)
+        except Exception:
+            return
+        self._style_i += 1
+        with self._lock:
+            self._glyph_name = f"reacting: {mode or self.state.dominant_emotion}"
+            self._last_style = {}
+            self._body_since = time.time()
+            self._cur_spec, self._cur_learnable = None, False
+        self.expr.set_render(fn, f"reactface#{self._style_i}", dur=0.45)  # snaps in = immediate
+        self._hold_until = time.time() + 9          # lingers so it's clearly a reaction to you
 
     def _fire_facade(self, kind: str, dur: float = 2.5):
         """Trigger a transient, legible whole-facade gesture (bloom/withdraw/ripple/perk)."""
