@@ -763,8 +763,7 @@ class Being:
                     print(f"being: frame error: {type(e).__name__}: {e}")
 
                 sleep = dt_target - (time.time() - now)
-                if sleep > 0:
-                    time.sleep(sleep)
+                time.sleep(max(0.004, sleep))   # always yield the GIL so chat requests aren't starved
         finally:
             if self.state_path:
                 self.state.save(self.state_path)

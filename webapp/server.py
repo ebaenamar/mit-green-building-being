@@ -93,6 +93,7 @@ BEING = Being(DISPLAY, mind=make_mind(prefer_llm=True), voice=None,
               library_path=os.path.join(HERE, "..", "data", "web_glyphs.json"),
               genome_path=os.path.join(HERE, "..", "data", "web_morph.json"),
               express_mode="glyph", view_url=VIEW, on_event=push, city=CITY, transit=TRANSIT,
+              fps=int(os.environ.get("GB_FPS", "15")),   # lower fps frees the GIL for chat requests
               autonomy_period=float(os.environ.get("GB_AUTONOMY", "26")))
 threading.Thread(target=BEING.run, name="being", daemon=True).start()
 
