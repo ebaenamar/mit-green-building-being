@@ -306,12 +306,13 @@ class Being:
                                    name=(decision.body_intent[:24] or decision.emblem or "a vision"),
                                    dur=decision.morph_secs)
             body_changed = True
-        elif (self.express_mode == "glyph" and decision.emblem
-              and emblem_registry.get(decision.emblem)):
-            # it chose to BECOME a specific thing tied to its place/self (the Charles=wave, the
-            # night=moon/rain, the season=tree/flower) and its words point at it — SHOW that, so
-            # word and windows connect.
-            self._express_emblem(decision.emblem, decision.body_intent)
+        elif self.express_mode == "glyph" and (
+                (emblem_registry.get(decision.emblem) and decision.emblem)
+                or self._emblem_from_text(decision.utterance)):
+            # it NAMED a thing tied to its place/self (the Charles=wave, the night=moon/rain, the
+            # season=tree/flower) — SHOW exactly that, so word and windows connect.
+            show = decision.emblem if emblem_registry.get(decision.emblem) else self._emblem_from_text(decision.utterance)
+            self._express_emblem(show, decision.body_intent)
             body_changed = False
         elif self.express_mode == "glyph":
             # DEFAULT for a normal message: the face visibly REACTS with the felt emotion and
@@ -809,6 +810,28 @@ class Being:
         self.expr.set_render(fn, f"pixels#{self._style_i}", dur=max(0.4, dur))
         self._cur_spec, self._cur_learnable = None, False   # pixel bitmaps use a different renderer
         self._hold_until = time.time() + 10
+
+    _TXT_EMBLEM = {
+        "star": "star", "stars": "star", "moon": "moon", "moonlight": "moon", "moonlit": "moon",
+        "sun": "sun", "sunrise": "sun", "sunset": "sun", "dawn": "sun",
+        "river": "wave", "charles": "wave", "water": "wave", "wave": "wave", "waves": "wave",
+        "rain": "rain", "snow": "rain", "snowing": "rain", "storm": "rain", "sleet": "rain",
+        "fire": "fire", "flame": "fire", "burning": "fire",
+        "heart": "heart", "love": "heart",
+        "leaf": "tree", "leaves": "tree", "tree": "tree", "autumn": "tree",
+        "flower": "flower", "flowers": "flower", "bloom": "flower", "spring": "flower",
+        "bird": "bird", "birds": "bird", "boat": "boat", "sail": "boat",
+    }
+
+    def _emblem_from_text(self, text: str):
+        """If the being NAMES a showable thing in its reply, return the emblem to show, so its
+        words and its windows match (say 'the Charles' -> show a wave)."""
+        import re
+        for w in re.findall(r"[a-zA-Z]+", (text or "").lower()):
+            e = self._TXT_EMBLEM.get(w)
+            if e and emblem_registry.get(e):
+                return e
+        return ""
 
     def _express_emblem(self, name: str, intent: str = ""):
         """Show a specific chosen emblem (the being pointing its body at a thing — the river,
