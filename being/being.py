@@ -67,13 +67,15 @@ FACE_MODE = {
 class Being:
     def __init__(self, display, mind=None, voice=None, state_path="", memory_path="",
                  fps=30, autonomy_period=7.0, time_of_day=0.5, express_mode="glyph",
-                 library_path="", view_url="", on_event=None, city=None, genome_path=""):
+                 library_path="", view_url="", on_event=None, city=None, genome_path="",
+                 transit=None):
         self.view_url = view_url
         self.on_event = on_event      # called with a dict when the being speaks to the group
         self.display = display
         self.mind = mind or make_mind()
         self.voice = voice
         self.city = city              # Boston's live weather/light as interoception (optional)
+        self.transit = transit        # the T (Red Line at Kendall/MIT) under it (optional)
         self.fps = fps
         self.autonomy_period = autonomy_period
         self.express_mode = express_mode      # "glyph" (emblems), "world" (Zelda), "face"
@@ -124,6 +126,7 @@ class Being:
         self._fg = np.zeros((ROWS, COLS, 3), dtype=float)    # the face/emblem layer
         self._wash = np.zeros((ROWS, COLS, 3), dtype=float)  # the whole-facade mood field
         self._facade_event = None                            # transient legible facade gesture
+        self._last_rumble = 0.0                               # last time the T rumbled through
         self._lock = threading.Lock()
         self._pending = []                 # raw stimuli awaiting the mind
         self._target = None                # emotional target the body eases toward
@@ -189,6 +192,11 @@ class Being:
         if self.city:
             try:
                 ctx["weather"] = self.city.context_line()
+            except Exception:
+                pass
+        if self.transit:
+            try:
+                ctx["transit"] = self.transit.context_line()
             except Exception:
                 pass
         return ctx
@@ -430,6 +438,11 @@ class Being:
                 self.city.start()      # Boston starts seeping into the body
             except Exception as e:
                 print(f"being: city sense failed to start: {e}")
+        if self.transit:
+            try:
+                self.transit.start()   # the T starts rumbling under it
+            except Exception as e:
+                print(f"being: transit sense failed to start: {e}")
         mt = threading.Thread(target=self._mind_loop, name="being-mind", daemon=True)
         mt.start()
         threading.Thread(target=self._muse_loop, name="being-muse", daemon=True).start()
@@ -676,6 +689,17 @@ class Being:
                             bias = self.city.bias()
                             if bias:
                                 self.state.nudge(**{k: v * dt for k, v in bias.items()})
+                        except Exception:
+                            pass
+                    if self.transit:
+                        try:
+                            tb = self.transit.bias()
+                            if tb:
+                                self.state.nudge(**{k: v * dt for k, v in tb.items()})
+                            # a train passing under it = a felt rumble on the facade
+                            if self.transit.just_rumbled() and now - self._last_rumble > 20:
+                                self._last_rumble = now
+                                self._fire_facade("ripple", 1.6)
                         except Exception:
                             pass
                     self._relabel()

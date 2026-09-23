@@ -395,6 +395,8 @@ class LlmMind:
             bodyline += f"BEING WATCHED: {ctx['watched']}\n"
         if ctx.get("weather"):
             bodyline += f"BODY & PLACE: {ctx['weather']}\n"
+        if ctx.get("transit"):
+            bodyline += f"THE T (under you): {ctx['transit']}\n"
         user = (bodyline
                 + f"YOU FEEL: {state.dominant_emotion} (valence {state.valence:.2f}, "
                 f"arousal {state.arousal:.2f}) — react like a real person in this mood, and "
