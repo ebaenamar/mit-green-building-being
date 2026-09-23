@@ -289,7 +289,12 @@ def main():
     print(f"Web app:      http://localhost:{port}")
     if TG:
         threading.Thread(target=tg_poll, name="telegram", daemon=True).start()
-    ThreadingHTTPServer(("0.0.0.0", port), H).serve_forever()
+    # bigger listen backlog so a burst of dozens of simultaneous connections isn't refused
+    # (default request_queue_size is 5 -> the rest get 502 under load)
+    ThreadingHTTPServer.request_queue_size = 256
+    ThreadingHTTPServer.daemon_threads = True
+    srv = ThreadingHTTPServer(("0.0.0.0", port), H)
+    srv.serve_forever()
 
 
 if __name__ == "__main__":
