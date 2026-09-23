@@ -288,8 +288,10 @@ class Being:
             self._will_show = f"a {pname}"
         elif req_emblem:
             self._will_show = req_emblem
+        elif felt:
+            self._will_show = f"a {felt} face"      # empathic face we WILL render (matches)
         else:
-            self._will_show = f"a {felt or self.state.dominant_emotion} face"
+            self._will_show = "your face"           # exact emotion decided later; stay generic
 
         self._mode_hint = self._pick_mode()        # force a fresh response shape this turn
         self._len_hint = self._pick_length()       # and a fresh length, so replies breathe
