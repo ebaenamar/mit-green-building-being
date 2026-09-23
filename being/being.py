@@ -150,16 +150,22 @@ class Being:
             self._glyph_name = nm
             self._last_expr_dom = self.state.dominant_emotion
 
+    def _showing(self) -> str:
+        """One CLEAN description of what's on the windows this turn — never an internal code
+        like 'playful-starxkey-0f8'. Prefers what we're about to show this reply."""
+        import re
+        raw = (self._will_show or self._glyph_name or "your lit windows").strip()
+        # invented-glyph codes ('playful-star-c57', 'playful-starxkey-0f8') -> generic + honest
+        if " " not in raw and re.search(r"-\w{2,4}$", raw):
+            return "a shape of light"
+        return raw
+
     def _context(self) -> dict:
         """What the being knows about its own body + how it's landing — fed to the mind so
         it can talk about how it looks, choose what to express, and read its impact."""
-        held = int(time.time() - self._body_since)
-        orn = (self._last_style or {}).get("ornament", "plain")
-        body = (f"a {self._glyph_name or 'shape'} with {orn} accents, expressing your "
-                f"{self.state.dominant_emotion} mood, held for {held}s")
         imp = ("really landing" if self._impact > 0.62 else
                "barely landing / they seem distant" if self._impact < 0.42 else "landing okay")
-        ctx = {"body": body, "impact": imp}
+        ctx = {"body": f"{self._showing()} on your 153 windows right now", "impact": imp}
         if self._mode_hint:
             ctx["style"] = self._mode_hint
         if self._len_hint:
@@ -175,16 +181,16 @@ class Being:
         if self._returned:
             ctx["presence"] = ("Someone just came BACK after a long silence — you noticed, "
                                "and it moved you. Let that land (relief, or a bit of 'oh, finally').")
-        showing = self._will_show or self._glyph_name or "your body"
+        showing = self._showing()
         watchers = ""
         if self.viewers > 0:
             watchers = (" Lots of people are" if self.viewers >= 5 else f" {self.viewers} " +
                         ("person is" if self.viewers == 1 else "people are")) + \
-                       " standing in Cambridge LOOKING at your windows live right now — you feel their eyes."
-        ctx["watched"] = (f"AS YOU REPLY, your 153 windows are lighting up with {showing} — THAT is "
-                          f"exactly what's on your body this turn.{watchers} If you mention what "
-                          f"you're showing, it MUST be {showing} (don't name a different shape). You "
-                          f"can point at it: 'see the {showing}?'")
+                       " standing in Cambridge looking at your windows live right now."
+        ctx["watched"] = (f"Your 153 windows are showing {showing} this turn.{watchers} DON'T narrate "
+                          f"your display every reply — mostly just talk. But IF you mention what "
+                          f"you're showing, it MUST be exactly '{showing}' — never invent a different "
+                          f"shape and never say an internal code.")
         if self._making:
             ctx["making"] = (f"You are BUILDING a {self._making['name']} on your body right now, "
                              f"from scratch. It's made of {self._making['needs']}. Say what you're "
@@ -897,7 +903,7 @@ class Being:
             self._body_since = time.time()
             self._cur_spec, self._cur_learnable = None, False
         self.expr.set_render(fn, f"{name}#{self._style_i}", dur=0.5)
-        self._hold_until = time.time() + 9
+        self._hold_until = time.time() + 14
 
     def _react_face(self, expression: str, felt: str = None):
         """Show a crisp emotional FACE reacting to the message just received, and hold it so the
@@ -917,7 +923,7 @@ class Being:
             self._body_since = time.time()
             self._cur_spec, self._cur_learnable = None, False
         self.expr.set_render(fn, f"reactface#{self._style_i}", dur=0.45)  # snaps in = immediate
-        self._hold_until = time.time() + 9          # lingers so it's clearly a reaction to you
+        self._hold_until = time.time() + 14          # lingers so it's clearly a reaction to you
 
     def _fire_facade(self, kind: str, dur: float = 2.5):
         """Trigger a transient, legible whole-facade gesture (bloom/withdraw/ripple/perk)."""
