@@ -127,6 +127,8 @@ class Being:
         self._wash = np.zeros((ROWS, COLS, 3), dtype=float)  # the whole-facade mood field
         self._facade_event = None                            # transient legible facade gesture
         self._last_rumble = 0.0                               # last time the T rumbled through
+        self._frame_i = 0                                    # for throttling sends to the building
+        self._send_every = max(1, int(round(fps / 12.0)))    # POST to the building ~12 fps, not 30
         self._lock = threading.Lock()
         self._pending = []                 # raw stimuli awaiting the mind
         self._target = None                # emotional target the body eases toward
@@ -751,7 +753,12 @@ class Being:
                         self.world.update(self.state, hint, dt)
                         self.world.render(self.buf, now)
                         self.world.glitch(self.buf, self.state.saturation, now)
-                    self.display.send(self._to_frame())
+                    # POST to the physical building at ~12 fps (not 30) — the external HTTP
+                    # send every frame is the biggest CPU/network hog and starves LLM calls
+                    # under load. The web /api/frame still reads self.buf every frame.
+                    self._frame_i += 1
+                    if self._frame_i % self._send_every == 0:
+                        self.display.send(self._to_frame())
                 except Exception as e:      # a bad frame must never kill the being
                     print(f"being: frame error: {type(e).__name__}: {e}")
 

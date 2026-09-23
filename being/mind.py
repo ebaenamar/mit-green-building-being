@@ -10,11 +10,17 @@ hint, a musical intent, and a memory to keep. Neither ever treats input as a com
 from __future__ import annotations
 import json
 import os
+import threading
 import urllib.request
 from dataclasses import dataclass, field
 
 from .palette import clamp
 from .emblem_registry import NAMES as EMBLEM_NAMES
+
+# Cap concurrent OpenAI calls so a burst of dozens of chatters QUEUES instead of opening a
+# storm of SSL connections (which trips rate limits -> everyone drops to canned reflex).
+# This is what keeps it ALIVE under load instead of collapsing. Tune with GB_LLM_CONCURRENCY.
+_LLM_SEM = threading.Semaphore(int(os.environ.get("GB_LLM_CONCURRENCY", "6")))
 
 SCENES = ["overworld", "meadow", "forest", "night_forest", "cave", "action", "dungeon"]
 
@@ -437,8 +443,9 @@ class LlmMind:
             "https://api.openai.com/v1/chat/completions", data=body,
             headers={"Content-Type": "application/json",
                      "Authorization": f"Bearer {self.api_key}"})
-        with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-            data = json.load(resp)
+        with _LLM_SEM:                    # queue under a burst instead of storming the API
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                data = json.load(resp)
         obj = json.loads(data["choices"][0]["message"]["content"])
         return _decision_from_llm(obj)
 
