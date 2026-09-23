@@ -108,6 +108,7 @@ class Being:
         self._mode_hint = ""          # the required response shape for the current reply
         self._len_hint = ""           # the required response length for the current reply
         self._returned = False        # someone just came back after a silence (perk up)
+        self._will_show = ""          # the form we're about to put on the windows this turn
         self.viewers = 0              # how many are watching the building live right now
         self._last_lines = []         # its own recent utterances (to avoid repeating the shape)
         self._last_music = 0.0        # last time it offered music (rationed)
@@ -171,16 +172,16 @@ class Being:
         if self._returned:
             ctx["presence"] = ("Someone just came BACK after a long silence — you noticed, "
                                "and it moved you. Let that land (relief, or a bit of 'oh, finally').")
-        showing = self._glyph_name or "your body"
+        showing = self._will_show or self._glyph_name or "your body"
+        watchers = ""
         if self.viewers > 0:
-            many = "Lots of people are" if self.viewers >= 5 else f"{self.viewers} " + ("person is" if self.viewers == 1 else "people are")
-            ctx["watched"] = (f"RIGHT NOW your 153 windows are lit up showing {showing}, and "
-                              f"{many.lower()} standing in Cambridge LOOKING at it, live. You feel "
-                              f"their eyes. Point at what you're showing, use it — 'see the {showing} "
-                              f"I just went?' — make them feel witnessed and that YOU know they see you.")
-        else:
-            ctx["watched"] = (f"Your 153 windows are showing {showing} right now; anyone looking up "
-                              f"at you in Cambridge can see it. You can point at it.")
+            watchers = (" Lots of people are" if self.viewers >= 5 else f" {self.viewers} " +
+                        ("person is" if self.viewers == 1 else "people are")) + \
+                       " standing in Cambridge LOOKING at your windows live right now — you feel their eyes."
+        ctx["watched"] = (f"AS YOU REPLY, your 153 windows are lighting up with {showing} — THAT is "
+                          f"exactly what's on your body this turn.{watchers} If you mention what "
+                          f"you're showing, it MUST be {showing} (don't name a different shape). You "
+                          f"can point at it: 'see the {showing}?'")
         if self._making:
             ctx["making"] = (f"You are BUILDING a {self._making['name']} on your body right now, "
                              f"from scratch. It's made of {self._making['needs']}. Say what you're "
@@ -256,6 +257,26 @@ class Being:
                 self._cur_spec, self._cur_form_name, self._cur_learnable = spec, pname, bool(spec)
                 self._hold_until = time.time() + 14   # hold it so they see it (and it can be learned)
 
+        # Decide WHAT the windows will show this turn BEFORE speaking, so the words can match the
+        # image. Priority: a body part they asked for > an object they asked to see > an empathic
+        # face reading how their message feels.
+        req_emblem = self._requested_emblem(text) if (self.express_mode == "glyph" and not built) else ""
+        felt = None
+        if not built and not req_emblem:
+            vt, en = sens.valence_tone, sens.energy_tone
+            if vt < 0.45:
+                felt = "sad" if en < 0.55 else "angry"
+            elif vt > 0.60:
+                felt = "happy"
+            elif en > 0.80:
+                felt = "surprised"
+        if built:
+            self._will_show = f"a {pname}"
+        elif req_emblem:
+            self._will_show = req_emblem
+        else:
+            self._will_show = f"a {felt or self.state.dominant_emotion} face"
+
         self._mode_hint = self._pick_mode()        # force a fresh response shape this turn
         self._len_hint = self._pick_length()       # and a fresh length, so replies breathe
         decision = self.mind.interpret(self.state, [sens], self.memory,
@@ -295,8 +316,12 @@ class Being:
             self._fire_facade(em[2], 2.0)
         # The body changes only if that nudge actually tipped the being into a new mood;
         # otherwise it just answers with words and keeps the body it already wears.
+        # render EXACTLY what we told it it's showing (self._will_show), so words match image
         if built:
             body_changed = True                    # already showing the requested part; keep it
+        elif self.express_mode == "glyph" and req_emblem:      # they asked to see this exact thing
+            self._express_emblem(req_emblem, "")
+            body_changed = False
         elif self.express_mode == "glyph" and decision.pixels:   # the AI painted a specific thing
             self._express_pixels(decision.pixels,
                                  name=(decision.body_intent[:24] or "a drawing"))
@@ -306,29 +331,16 @@ class Being:
                                    name=(decision.body_intent[:24] or decision.emblem or "a vision"),
                                    dur=decision.morph_secs)
             body_changed = True
-        elif self.express_mode == "glyph" and (
-                (emblem_registry.get(decision.emblem) and decision.emblem)
-                or self._emblem_from_text(decision.utterance)):
-            # it NAMED a thing tied to its place/self (the Charles=wave, the night=moon/rain, the
-            # season=tree/flower) — SHOW exactly that, so word and windows connect.
-            show = decision.emblem if emblem_registry.get(decision.emblem) else self._emblem_from_text(decision.utterance)
-            self._express_emblem(show, decision.body_intent)
+        elif self.express_mode == "glyph" and emblem_registry.get(decision.emblem) and decision.emblem:
+            self._express_emblem(decision.emblem, decision.body_intent)
             body_changed = False
         elif self.express_mode == "glyph":
-            # DEFAULT for a normal message: the face visibly REACTS with the felt emotion and
-            # holds, so you see it responding to YOU — not ambient shape-shifting. A strong
-            # emotional tone in what they SAID drives an empathic face over its default mood.
-            felt = None
-            if sens.valence_tone < 0.45:
-                felt = "sad" if sens.energy_tone < 0.55 else "angry"
-            elif sens.valence_tone > 0.60:
-                felt = "happy"
-            elif sens.energy_tone > 0.80:
-                felt = "surprised"
+            # DEFAULT: the empathic face reads how their message feels, held so it's a reaction.
             self._react_face(decision.expression, felt)
             body_changed = False
         else:
             body_changed = False
+        self._will_show = ""                        # autonomy falls back to the real current form
         if decision.utterance:
             with self._lock:
                 self._convo.append(f"me: {decision.utterance}")
@@ -821,13 +833,28 @@ class Being:
         "leaf": "tree", "leaves": "tree", "tree": "tree", "autumn": "tree",
         "flower": "flower", "flowers": "flower", "bloom": "flower", "spring": "flower",
         "bird": "bird", "birds": "bird", "boat": "boat", "sail": "boat",
+        # español (accents already folded before lookup)
+        "rio": "wave", "agua": "wave", "ola": "wave", "olas": "wave",
+        "luna": "moon", "sol": "sun", "amanecer": "sun", "estrella": "star", "estrellas": "star",
+        "lluvia": "rain", "nieve": "rain", "tormenta": "rain", "fuego": "fire", "llama": "fire",
+        "corazon": "heart", "amor": "heart", "arbol": "tree", "hoja": "tree", "hojas": "tree",
+        "otono": "tree", "flor": "flower", "flores": "flower", "primavera": "flower",
+        "pajaro": "bird", "barco": "boat", "vela": "boat",
     }
 
-    def _emblem_from_text(self, text: str):
-        """If the being NAMES a showable thing in its reply, return the emblem to show, so its
-        words and its windows match (say 'the Charles' -> show a wave)."""
-        import re
-        for w in re.findall(r"[a-zA-Z]+", (text or "").lower()):
+    _SHOW_WORDS = ("show", "see ", "look at", "muestra", "muestrame", "ensen", "enseñ",
+                   "let me see", "quiero ver", "puedo ver", "become", "conviertete",
+                   "hazte", "dibuja", "hablame de", "tell me about", "talk about")
+
+    def _requested_emblem(self, text: str):
+        """If the USER asks to see/show a nameable thing (the river, the moon, a star...),
+        return the emblem to show — reliable word<->image, decided from THEIR request (not by
+        scraping the reply, which mis-fires)."""
+        from .anatomy import _fold
+        s = _fold(text)
+        if not any(_fold(w) in s for w in self._SHOW_WORDS):
+            return ""
+        for w in s.replace("?", " ").replace(",", " ").split():
             e = self._TXT_EMBLEM.get(w)
             if e and emblem_registry.get(e):
                 return e
