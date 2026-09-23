@@ -171,10 +171,16 @@ class Being:
         if self._returned:
             ctx["presence"] = ("Someone just came BACK after a long silence — you noticed, "
                                "and it moved you. Let that land (relief, or a bit of 'oh, finally').")
+        showing = self._glyph_name or "your body"
         if self.viewers > 0:
-            many = "lots of people are" if self.viewers >= 5 else f"{self.viewers} " + ("person is" if self.viewers == 1 else "people are")
-            ctx["watched"] = (f"{many} watching your windows LIVE right now — they can see you're "
-                              f"showing {self._glyph_name or 'your body'}. You feel their eyes on you.")
+            many = "Lots of people are" if self.viewers >= 5 else f"{self.viewers} " + ("person is" if self.viewers == 1 else "people are")
+            ctx["watched"] = (f"RIGHT NOW your 153 windows are lit up showing {showing}, and "
+                              f"{many.lower()} standing in Cambridge LOOKING at it, live. You feel "
+                              f"their eyes. Point at what you're showing, use it — 'see the {showing} "
+                              f"I just went?' — make them feel witnessed and that YOU know they see you.")
+        else:
+            ctx["watched"] = (f"Your 153 windows are showing {showing} right now; anyone looking up "
+                              f"at you in Cambridge can see it. You can point at it.")
         if self._making:
             ctx["making"] = (f"You are BUILDING a {self._making['name']} on your body right now, "
                              f"from scratch. It's made of {self._making['needs']}. Say what you're "
@@ -300,6 +306,13 @@ class Being:
                                    name=(decision.body_intent[:24] or decision.emblem or "a vision"),
                                    dur=decision.morph_secs)
             body_changed = True
+        elif (self.express_mode == "glyph" and decision.emblem
+              and emblem_registry.get(decision.emblem)):
+            # it chose to BECOME a specific thing tied to its place/self (the Charles=wave, the
+            # night=moon/rain, the season=tree/flower) and its words point at it — SHOW that, so
+            # word and windows connect.
+            self._express_emblem(decision.emblem, decision.body_intent)
+            body_changed = False
         elif self.express_mode == "glyph":
             # DEFAULT for a normal message: the face visibly REACTS with the felt emotion and
             # holds, so you see it responding to YOU — not ambient shape-shifting. A strong
@@ -797,6 +810,19 @@ class Being:
         self._cur_spec, self._cur_learnable = None, False   # pixel bitmaps use a different renderer
         self._hold_until = time.time() + 10
 
+    def _express_emblem(self, name: str, intent: str = ""):
+        """Show a specific chosen emblem (the being pointing its body at a thing — the river,
+        the moon, the season) and hold it, so its words and its windows match."""
+        self._style_i += 1
+        style = styled.style_for(self.state, self._style_i)
+        with self._lock:
+            self._glyph_name = (intent[:24] or name)
+            self._last_style = style
+            self._body_since = time.time()
+            self._cur_spec, self._cur_learnable = None, False
+        self.expr.set_render(styled.make_styled(name, style), f"{name}#{self._style_i}", dur=0.5)
+        self._hold_until = time.time() + 9
+
     def _react_face(self, expression: str, felt: str = None):
         """Show a crisp emotional FACE reacting to the message just received, and hold it so the
         interaction READS as a felt reaction (not ambient morphing). A strong emotional tone in
@@ -810,7 +836,7 @@ class Being:
             return
         self._style_i += 1
         with self._lock:
-            self._glyph_name = f"reacting: {mode or self.state.dominant_emotion}"
+            self._glyph_name = f"a {mode or self.state.dominant_emotion} face"
             self._last_style = {}
             self._body_since = time.time()
             self._cur_spec, self._cur_learnable = None, False
