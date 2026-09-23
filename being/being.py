@@ -861,16 +861,18 @@ class Being:
         return ""
 
     def _express_emblem(self, name: str, intent: str = ""):
-        """Show a specific chosen emblem (the being pointing its body at a thing — the river,
-        the moon, the season) and hold it, so its words and its windows match."""
+        """Show a specific named thing the user asked to see (river, moon, star, sun...) in its
+        TRUE colors — NOT mood-recolored — so it's unmistakably that thing, and hold it."""
+        fn = emblem_registry.get(name)
+        if not fn:
+            return
         self._style_i += 1
-        style = styled.style_for(self.state, self._style_i)
         with self._lock:
-            self._glyph_name = (intent[:24] or name)
-            self._last_style = style
+            self._glyph_name = name          # the real thing name, for the 'showing' context
+            self._last_style = {}
             self._body_since = time.time()
             self._cur_spec, self._cur_learnable = None, False
-        self.expr.set_render(styled.make_styled(name, style), f"{name}#{self._style_i}", dur=0.5)
+        self.expr.set_render(fn, f"{name}#{self._style_i}", dur=0.5)
         self._hold_until = time.time() + 9
 
     def _react_face(self, expression: str, felt: str = None):
