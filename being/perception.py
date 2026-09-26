@@ -15,9 +15,10 @@ _POS = set(("love like joy happy warm gentle beautiful calm peace kind hello hi 
             "amor amo quiero feliz contento contenta alegre alegria gracias bonito linda "
             "lindo hermoso hermosa genial increible bien bueno buena abrazo cariño hola "
             "encanta guay chulo maravilloso").split())
-_NEG = set(("hate angry fear dark cold cruel sad lonely alone pain hurt no stop bad "
+# NOTE: "no"/"stop"/"help"/"careful" removed — ubiquitous (esp. Spanish "no"), not sadness
+_NEG = set(("hate angry fear dark cold cruel sad lonely alone pain hurt bad "
             "afraid scared tired sick death die empty lost broken danger chasing chase "
-            "threat monster enemy attack help careful "
+            "threat monster enemy attack "
             # español
             "triste tristeza solo sola miedo dolor mal malo odio llorar lloro muerte "
             "muerto cansado cansada enfermo enferma perdido perdida roto rota adios harto "

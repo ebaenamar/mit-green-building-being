@@ -784,8 +784,10 @@ class Being:
 
             sensations = [self.perceiver.perceive(r) for r in pending]
             self.memory.decay(0.15 * 60)  # coarse; memory fades over minutes
+            # alone (no human stimulus) -> autonomous: free model now and then, never OpenAI
             decision = self.mind.interpret(self.state, sensations, self.memory,
-                                           convo=list(self._convo), context=self._context())
+                                           convo=list(self._convo), context=self._context(),
+                                           autonomous=not pending)
             target = (appraisal_to_target(self.state, decision.appraisal)
                       if decision.appraisal else decision.emotion_target)
             with self._lock:

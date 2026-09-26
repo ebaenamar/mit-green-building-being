@@ -31,3 +31,7 @@ services:
         sync: false
       - key: TELEGRAM_TOKEN       # set in the Render dashboard (never committed)
         sync: false
+      - key: OPENROUTER_API_KEY   # free-model fallback / idle thoughts (never committed)
+        sync: false
+      - key: GLM_API_KEY          # Zhipu GLM-4.5-flash free fallback (never committed)
+        sync: false

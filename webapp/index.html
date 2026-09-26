@@ -75,6 +75,8 @@
 
 <audio id="au"></audio>
 <script>
+function domLabel(d,g){d=d||'—';const m=(g||'').match(/^a (\w+) face$/);return (m&&m[1]!==d)?d+' · reacting: '+m[1]:d;}
+
 const $=s=>document.querySelector(s);
 const log=$('#log'), au=$('#au');
 const SC=["arousal","valence","curiosity","openness","confidence","saturation","social_affinity","coherence"];
@@ -107,7 +109,7 @@ function drawBodyRAF(){
 
 async function refreshState(){
   try{const s=await (await fetch('/api/state')).json();
-    renderBars(s.sentiment); $('#dom').textContent=s.dominant||'—';
+    renderBars(s.sentiment); $('#dom').textContent=domLabel(s.dominant,s.glyph);
     $('#glyph').textContent=s.glyph||'…'; $('#glyph2').textContent=s.glyph||'…';
     $('#xf').textContent=s.transforming?'· transforming…':'';
   }catch(e){}
@@ -184,7 +186,7 @@ async function send(){
   try{
     const r=await (await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({message:msg, who:NAME_ME})})).json();
-    renderBars(r.sentiment); $('#dom').textContent=r.dominant;
+    renderBars(r.sentiment); $('#dom').textContent=domLabel(r.dominant,r.glyph);
     playSynth(r.music);                        // a little musical voice every reply
     if(r.wants_music && INFO && INFO.lyria && r.lyria_prompt){
       $('#nowmusic').innerHTML='music: <b>Lyria composing…</b>';

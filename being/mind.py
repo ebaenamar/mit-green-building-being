@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+import time
 import urllib.request
 from dataclasses import dataclass, field
 
@@ -293,7 +294,8 @@ class Decision:
 class ReflexMind:
     """No-API heuristic. Emotion emerges from the sensation's tone/energy + trajectory."""
 
-    def interpret(self, state, sensations, memory, speaker="", convo=None, context=None) -> Decision:
+    def interpret(self, state, sensations, memory, speaker="", convo=None, context=None,
+                  autonomous=False) -> Decision:
         s = state
         tgt = {k: getattr(s, k) for k in
                ("arousal", "valence", "curiosity", "openness", "confidence",
@@ -359,24 +361,152 @@ class ReflexMind:
                                     "musical_intent": music}, source="reflex")
 
 
-class LlmMind:
-    """OpenAI-backed mind. Falls back to ReflexMind on any error."""
+_OR_URL = "https://openrouter.ai/api/v1/chat/completions"
+_GLM_URL = os.environ.get("GLM_BASE_URL", "https://api.z.ai/api/paas/v4") + "/chat/completions"
+# OpenRouter free models, fastest/most reliable first (override with OPENROUTER_MODELS)
+_OR_DEFAULT = ("nvidia/nemotron-3-super-120b-a12b:free,poolside/laguna-s-2.1:free,"
+               "nvidia/nemotron-3-ultra-550b-a55b:free")
+_ONLY_JSON = {"role": "user", "content": "Reply with ONLY the JSON object — no reasoning, "
+              "no preamble, no markdown. Fill at least: appraisal, emotional_state, expression, "
+              "voice.utterance, emblem."}
 
-    def __init__(self, api_key: str, model: str = None, timeout: float = 24.0):
+
+def _extract_json(text: str) -> dict:
+    """Free models don't always honour JSON mode: pull the first {...} object out of the text
+    (tolerates code fences and a leading <think> block)."""
+    t = (text or "").strip()
+    if "</think>" in t:
+        t = t.split("</think>", 1)[1]
+    a, b = t.find("{"), t.rfind("}")
+    if a < 0 or b <= a:
+        raise ValueError("no JSON object in reply")
+    return json.loads(t[a:b + 1])
+
+
+def _require_utterance(content: str):
+    j = _extract_json(content)
+    u = (j.get("voice") or {}).get("utterance") if isinstance(j.get("voice"), dict) else j.get("voice")
+    if not (u or j.get("utterance")):
+        raise ValueError("reply had no utterance")
+
+
+class FreeLLM:
+    """A chain of FREE model providers (OpenRouter free models + Zhipu GLM-4.5-flash). Free
+    endpoints are flaky, so it tries them in a mode-specific order, validates the reply, puts a
+    provider that 429s on a 60 s cooldown, and raises only if every one fails.
+      mode='human' : fastest first (someone is waiting)
+      mode='idle'  : GLM first (latency doesn't matter; spares OpenRouter's daily free cap)
+    """
+
+    def __init__(self, providers):
+        self.providers = providers          # [{name,url,key,model,extra,human,idle}]
+        self.cool = {}
+        self.last_ok = {}
+
+    @classmethod
+    def from_env(cls):
+        ps = []
+        okey = os.environ.get("OPENROUTER_API_KEY", "").strip()
+        if okey:
+            for i, m in enumerate([x.strip() for x in os.environ.get("OPENROUTER_MODELS", _OR_DEFAULT).split(",") if x.strip()]):
+                ps.append({"name": m.split("/")[-1], "url": _OR_URL, "key": okey, "model": m,
+                           "extra": {"reasoning": {"enabled": False}},
+                           "human": (0 if i == 0 else 2 + i), "idle": 1 + i})
+        gkey = (os.environ.get("GLM_API_KEY") or os.environ.get("ZAI_API_KEY") or "").strip()
+        if gkey:
+            ps.append({"name": "glm-4.5-flash", "url": _GLM_URL, "key": gkey,
+                       "model": os.environ.get("GLM_MODEL", "glm-4.5-flash"),
+                       "extra": {"thinking": {"type": "disabled"}}, "human": 1, "idle": 0})
+        return cls(ps) if ps else None
+
+    def _order(self, mode):
+        now = time.time()
+        ps = sorted(self.providers, key=lambda p: p[mode])
+        ps = [p for p in ps if self.cool.get(p["name"], 0) <= now] or ps
+        lk = self.last_ok.get(mode)
+        return sorted(ps, key=lambda p: 0 if p["name"] == lk else 1)
+
+    def chat(self, messages, mode="human", max_tokens=1500, temperature=0.9, validate=None):
+        err = None
+        timeout = 20 if mode == "human" else 45
+        for p in self._order(mode):
+            body = json.dumps({"model": p["model"], "messages": messages, "temperature": temperature,
+                               "max_tokens": max_tokens, **p["extra"]}).encode()
+            hdr = {"Content-Type": "application/json", "Authorization": f"Bearer {p['key']}"}
+            if p["url"] == _OR_URL:
+                hdr.update({"HTTP-Referer": "https://green-being.onrender.com",
+                            "X-Title": "MIT Green Building Being"})
+            try:
+                with urllib.request.urlopen(urllib.request.Request(p["url"], data=body, headers=hdr),
+                                            timeout=timeout) as r:
+                    data = json.load(r)
+                content = (data["choices"][0]["message"].get("content") or "").strip()
+                if not content:
+                    raise ValueError("empty reply")
+                if validate:
+                    validate(content)
+                self.last_ok[mode] = p["name"]
+                return content, p["name"]
+            except Exception as e:
+                err = e
+                if getattr(e, "code", None) == 429:          # saturated / out of quota: back off
+                    self.cool[p["name"]] = time.time() + 60
+                if self.last_ok.get(mode) == p["name"]:
+                    self.last_ok.pop(mode, None)
+        raise err or RuntimeError("no free provider answered")
+
+
+class LlmMind:
+    """Paid mind (OpenAI) for PEOPLE; free mind (OpenRouter free models) for when nobody is
+    talking; reflex as the last resort.
+      human chat : OpenAI -> free -> reflex
+      alone      : free (throttled) -> reflex   — never spends OpenAI credit
+    """
+
+    def __init__(self, api_key: str, model: str = None, timeout: float = 24.0, free=None):
         self.api_key = api_key
         self.model = model or os.environ.get("OPENAI_MODEL", "gpt-4o")
         self.timeout = timeout
         self.fallback = ReflexMind()
+        self.free = free
+        # when alone, at most one free-model call per gap (free tiers have daily caps)
+        self.idle_gap = float(os.environ.get("GB_IDLE_LLM_GAP", "300"))
+        self.muse_gap = float(os.environ.get("GB_MUSE_LLM_GAP", "90"))
+        self._last_idle = 0.0
+        self._last_muse = 0.0
 
-    def interpret(self, state, sensations, memory, speaker="", convo=None, context=None) -> Decision:
-        try:
-            return self._call(state, sensations, memory, speaker, convo, context)
-        except Exception as e:
+    def interpret(self, state, sensations, memory, speaker="", convo=None, context=None,
+                  autonomous=False) -> Decision:
+        if autonomous:
+            # nobody is talking: never spend OpenAI. A free model now and then, else reflex.
+            if self.free and time.time() - self._last_idle >= self.idle_gap:
+                self._last_idle = time.time()
+                try:
+                    return self._call_free(state, sensations, memory, speaker, convo, context,
+                                           mode="idle")
+                except Exception as e:
+                    d = self.fallback.interpret(state, sensations, memory, speaker, convo, context)
+                    d.source = f"reflex(free failed: {type(e).__name__})"
+                    return d
             d = self.fallback.interpret(state, sensations, memory, speaker, convo, context)
-            d.source = f"reflex(llm failed: {type(e).__name__})"
+            d.source = "reflex(idle)"
             return d
+        err = None
+        if self.api_key:
+            try:
+                return self._call(state, sensations, memory, speaker, convo, context)
+            except Exception as e:
+                err = e
+        if self.free:                       # OpenAI down / out of credit -> free model
+            try:
+                return self._call_free(state, sensations, memory, speaker, convo, context)
+            except Exception as e:
+                err = err or e
+        d = self.fallback.interpret(state, sensations, memory, speaker, convo, context)
+        d.source = f"reflex(llm failed: {type(err).__name__ if err else 'no key'})"
+        return d
 
-    def _call(self, state, sensations, memory, speaker="", convo=None, context=None) -> Decision:
+    def _messages(self, state, sensations, memory, speaker="", convo=None, context=None):
         sens = ("\n".join(f"- {x.describe()}" for x in sensations)
                 if sensations else "- (no new stimulus; you are alone with your own state)")
         who = f"\nWHO JUST SPOKE: {speaker}" if speaker else ""
@@ -407,9 +537,8 @@ class LlmMind:
         user = (bodyline
                 + f"YOU FEEL: {state.dominant_emotion} (valence {state.valence:.2f}, "
                 f"arousal {state.arousal:.2f}) — react like a real person in this mood, and "
-                f"ANSWER them directly. SAY OUT LOUD how their message just landed on you (a "
-                f"spark, a sting, a flutter, a warm rush) and — if your body is shifting — point "
-                f"to it so they feel they moved you. Be specific, not misty.\n"
+                f"ANSWER them directly. Let how their message landed SHOW in what you say — "
+                f"never narrate it with stock words. Be specific, not misty.\n"
                 f"CURRENT STATE: {state.summary()}\n"
                 f"dominant={state.dominant_emotion} focus={state.current_focus}"
                 f"{who}\n"
@@ -429,14 +558,16 @@ class LlmMind:
                   "For SPEED, fill only appraisal, emotional_state, expression, voice, emblem; "
                   "leave visual_glyph, pixel_art, body_intent, music_wish empty unless it's a "
                   "special moment. When unsure, say less — blunter, weirder, realer.")
+        return [{"role": "system", "content": PERSONA}, {"role": "user", "content": user}]
+
+    def _call(self, state, sensations, memory, speaker="", convo=None, context=None) -> Decision:
         body = json.dumps({
             "model": self.model,
-            "messages": [{"role": "system", "content": PERSONA},
-                         {"role": "user", "content": user}],
+            "messages": self._messages(state, sensations, memory, speaker, convo, context),
             "response_format": {"type": "json_object"},
             "temperature": 0.95,
             "top_p": 0.95,
-            "frequency_penalty": 0.4,   # kill robotic repeated phrasing (the 'spark/ping' tic)
+            "frequency_penalty": 0.4,   # kill robotic repeated phrasing
             "presence_penalty": 0.3,    # push topic/vocabulary variety
         }).encode()
         req = urllib.request.Request(
@@ -447,11 +578,24 @@ class LlmMind:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                 data = json.load(resp)
         obj = json.loads(data["choices"][0]["message"]["content"])
-        return _decision_from_llm(obj)
+        d = _decision_from_llm(obj)
+        d.source = "llm"
+        return d
+
+    def _call_free(self, state, sensations, memory, speaker="", convo=None, context=None,
+                   mode="human") -> Decision:
+        msgs = self._messages(state, sensations, memory, speaker, convo, context) + [_ONLY_JSON]
+        with _LLM_SEM:
+            content, name = self.free.chat(msgs, mode=mode, validate=_require_utterance)
+        d = _decision_from_llm(_extract_json(content))
+        d.source = f"free:{name}"
+        return d
 
     def muse(self, state, memory, convo=None, hint=""):
-        """A short passing thought, voiced sometimes — not a status report. `hint` lets a
-        drive (loneliness/boredom/urge to make music) steer what surfaces."""
+        """A passing thought when alone — FREE model (throttled) or reflex. Never OpenAI."""
+        if not self.free or time.time() - self._last_muse < self.muse_gap:
+            return self.fallback.muse(state, memory, convo, hint=hint)
+        self._last_muse = time.time()
         try:
             recent = ("\nrecent talk:\n" + "\n".join(convo[-6:])) if convo else ""
             hintline = f"\nRIGHT NOW: {hint}" if hint else ""
@@ -461,36 +605,52 @@ class LlmMind:
                     "not a status report, do NOT name your emotion, do NOT say 'look at me'. "
                     "<=16 words, your MIT voice. Sometimes address someone by name, sometimes "
                     "wonder aloud, sometimes a tiny observation. Output only the thought.")
-            body = json.dumps({"model": self.model,
-                               "messages": [{"role": "system", "content": PERSONA},
-                                            {"role": "user", "content": user}],
-                               "temperature": 1.05, "max_tokens": 40}).encode()
-            req = urllib.request.Request(
-                "https://api.openai.com/v1/chat/completions", data=body,
-                headers={"Content-Type": "application/json",
-                         "Authorization": f"Bearer {self.api_key}"})
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                data = json.load(resp)
-            return data["choices"][0]["message"]["content"].strip().strip('"')[:170]
+            content, _m = self.free.chat([{"role": "system", "content": PERSONA},
+                                          {"role": "user", "content": user}],
+                                         mode="idle", max_tokens=300, temperature=1.0)
+            if "</think>" in content:
+                content = content.split("</think>", 1)[1]
+            line = next((l for l in content.strip().splitlines() if l.strip()), "")
+            line = line.strip().strip('"').strip()
+            return line[:170] if line else self.fallback.muse(state, memory, convo, hint=hint)
         except Exception:
-            return self.fallback.muse(state, memory, convo)
+            return self.fallback.muse(state, memory, convo, hint=hint)
 
 
 def make_mind(prefer_llm: bool = True):
     key = os.environ.get("OPENAI_API_KEY", "").strip()
-    if prefer_llm and key:
-        return LlmMind(key)
+    free = FreeLLM.from_env()          # OpenRouter free models and/or Zhipu GLM-4.5-flash
+    if prefer_llm and (key or free):
+        return LlmMind(key, free=free)
     return ReflexMind()
 
 
 # --- helpers --------------------------------------------------------------- #
+# free models name feelings loosely; fold them onto the faces we can draw
+_EXPR_SYN = {"melancholy": "sad", "melancholic": "sad", "wistful": "sad", "lonely": "sad",
+             "weary": "sleepy", "tired": "sleepy", "excited": "happy", "joyful": "happy",
+             "content": "happy", "calm": "neutral", "serene": "neutral", "fascinated": "curious",
+             "intrigued": "curious", "mischievous": "playful", "annoyed": "angry",
+             "frustrated": "angry", "shocked": "surprised", "tender": "love",
+             "affectionate": "love"}
+
+
+def _num(v, d=0.5):
+    try:
+        return clamp(float(v))
+    except (TypeError, ValueError):
+        return d
+
+
 def _decision_from_llm(obj: dict) -> Decision:
     es = obj.get("emotional_state", {}) or {}
+    if not isinstance(es, dict):
+        es = {}
     tgt = {}
     for k in ("arousal", "valence", "curiosity", "openness", "confidence",
               "saturation", "social_affinity", "coherence"):
         if k in es:
-            tgt[k] = clamp(float(es[k]))
+            tgt[k] = _num(es[k])
     tgt["dominant_emotion"] = es.get("dominant_emotion", "")
     tgt["secondary_emotion"] = es.get("secondary_emotion", "")
     vi = obj.get("visual_intent", {}) or {}
@@ -501,7 +661,15 @@ def _decision_from_llm(obj: dict) -> Decision:
     tgt["current_focus"] = vi.get("current_focus", "")
     tgt["current_desire"] = vi.get("current_desire", "")
     mem = obj.get("memory_update", {}) or {}
+    if not isinstance(mem, dict):
+        mem = {}
     voice = obj.get("voice", {}) or {}
+    if not isinstance(voice, dict):
+        voice = {"utterance": str(voice)}
+    if not voice.get("utterance") and obj.get("utterance"):   # some models put it top-level
+        voice["utterance"] = obj.get("utterance")
+    expr = str(obj.get("expression", "") or "").strip().lower()[:16]
+    expr = _EXPR_SYN.get(expr, expr)
     vg = obj.get("visual_glyph") or None
     glyph = vg if (isinstance(vg, dict) and vg.get("layers")) else None
     return Decision(
@@ -509,13 +677,13 @@ def _decision_from_llm(obj: dict) -> Decision:
         visual_hint={"scene": scene, "current_focus": tgt.get("current_focus", "")},
         music=obj.get("musical_intent", {}) or {},
         memory={"what_to_remember": mem.get("what_to_remember", ""),
-                "importance": clamp(float(mem.get("importance", 0.4) or 0.4)),
+                "importance": _num(mem.get("importance", 0.4) or 0.4, 0.4),
                 "influence": bool(mem.get("influence", True))},
         glyph=glyph, glyph_name=(vg or {}).get("name", "") if glyph else "",
         morph_secs=float((vg or {}).get("morph_secs", 1.4) or 1.4) if glyph else 1.4,
         utterance=str(voice.get("utterance", "") or "")[:320],
         invite_to_look=bool(voice.get("invite_to_look", False)),
-        expression=str(obj.get("expression", "") or "").strip().lower()[:16],
+        expression=expr,
         emblem=obj.get("emblem", "") if obj.get("emblem") in EMBLEM_NAMES else "",
         music_wish=str(obj.get("music_wish", "") or "")[:120],
         appraisal=(obj.get("appraisal") if isinstance(obj.get("appraisal"), dict) else None),
