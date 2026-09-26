@@ -349,7 +349,9 @@ class Being:
                                    name=(decision.body_intent[:24] or decision.emblem or "a vision"),
                                    dur=decision.morph_secs)
             body_changed = True
-        elif self.express_mode == "glyph" and emblem_registry.get(decision.emblem) and decision.emblem:
+        elif (self.express_mode == "glyph" and decision.emblem and emblem_registry.get(decision.emblem)
+              and self._names_emblem(decision.utterance, decision.emblem)):
+            # only when the words actually name it — otherwise the image wouldn't match the text
             self._express_emblem(decision.emblem, decision.body_intent)
             body_changed = False
         elif self.express_mode == "glyph":
@@ -885,6 +887,13 @@ class Being:
     _SHOW_WORDS = ("show", "see ", "look at", "muestra", "muestrame", "ensen", "enseñ",
                    "let me see", "quiero ver", "puedo ver", "become", "conviertete",
                    "hazte", "dibuja", "hablame de", "tell me about", "talk about")
+
+    def _names_emblem(self, text: str, emblem: str) -> bool:
+        """True if the reply actually names this emblem (e.g. 'the Charles' -> wave), so showing
+        it keeps words and windows in agreement."""
+        from .anatomy import _fold
+        words = _fold(text).replace("?", " ").replace(",", " ").replace(".", " ").split()
+        return emblem in words or any(self._TXT_EMBLEM.get(w) == emblem for w in words)
 
     def _requested_emblem(self, text: str):
         """If the USER asks to see/show a nameable thing (the river, the moon, a star...),
