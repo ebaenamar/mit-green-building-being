@@ -27,6 +27,7 @@ from .inventor import Library, invent
 from .morphogen import Genome
 from .drives import Drives
 from .people import People
+from .building_body import BuildingBody
 from . import emblem_registry, styled, gestures, anatomy, facade, cutegen
 from .glyph import render_glyph, render_pixels
 
@@ -100,6 +101,8 @@ class Being:
         self.morph = Genome(genome_path)      # the being's evolving body morphology
         self.drives = Drives()                # needs that push it to act on its own
         self.people = People(people_path)     # the people it knows (persist across restarts)
+        self.building = BuildingBody()        # ITS BODY: the Green Building's floors & windows
+        self._back_to_building = False        # after a held reaction, return to its own facade
         self._person_brief = ""               # what it knows about whoever is talking now
         self._spark = 0.0
         self._glyph_name = ""
@@ -151,14 +154,9 @@ class Being:
             self._relabel()                        # name the random waking mood first
             # invent the first body FROM that mood, so the very first thing on the building
             # is unique to this run — recognizable, but never the same shape twice.
-            try:
-                nm, spec = invent(self.state)
-                self.library.remember(nm, spec)
-                self.expr.set_render((lambda buf, t, g=spec: render_glyph(buf, g, t)), nm + "#0")
-                self._cur_spec, self._cur_form_name, self._cur_learnable = spec, nm, True
-            except Exception:
-                nm, _ = emblem_registry.pick(self.state)
-                self.expr.set_render(styled.make_styled(nm, styled.style_for(self.state, 0)), nm + "#0")
+            # it wakes up AS the building: its own facade, office lights and all
+            self.expr.set_render(self._building_fn, "building#0")
+            nm = "its own facade"
             self._glyph_name = nm
             self._last_expr_dom = self.state.dominant_emotion
 
@@ -188,6 +186,10 @@ class Being:
             dl = self.drives.context_line()
             if dl:
                 ctx["needs"] = dl
+        except Exception:
+            pass
+        try:
+            ctx["proprio"] = self.building.describe()
         except Exception:
             pass
         if self._person_brief:
@@ -372,6 +374,11 @@ class Being:
             # only when the words actually name it — otherwise the image wouldn't match the text
             self._express_emblem(decision.emblem, decision.body_intent)
             body_changed = False
+        elif self.express_mode == "glyph" and self.building.focus_from_text(decision.utterance):
+            # it talked about one of its own floors -> show ITSELF with that floor lit
+            self._show_building(dur=0.6)
+            self._hold_until = time.time() + 10
+            body_changed = False
         elif self.express_mode == "glyph":
             # DEFAULT: the empathic face reads how their message feels, held so it's a reaction.
             self._react_face(decision.expression, felt)
@@ -501,6 +508,10 @@ class Being:
             if self.express_mode != "glyph" or self.expr.transforming:
                 continue
             if time.time() < self._hold_until:     # a requested/held form is on screen
+                continue
+            if random.random() < 0.5:                  # at rest it's mostly just ITSELF
+                if not str(self.expr.cur_id).startswith("building"):
+                    self._show_building(dur=2.0)
                 continue
             self._style_i += 1
             roll = random.random()
@@ -780,6 +791,12 @@ class Being:
                     # unmet needs rise and leak into the mood (lonely dips valence, boredom
                     # dulls arousal/curiosity, a built-up urge to express gets restless)
                     try:
+                        self.building.tick(dt, self.state, self.viewers)
+                    except Exception:
+                        pass
+                    if self._back_to_building and now >= self._hold_until and not self.expr.transforming:
+                        self._show_building(dur=1.8)
+                    try:
                         self.drives.tick(dt)
                         db = self.drives.bias()
                         if db:
@@ -794,10 +811,16 @@ class Being:
                         # the WHOLE facade carries mood (legible at 90 m): fill every window
                         # with a living mood field, then composite the face over it so the
                         # dead black background becomes a breathing, autonomous body.
-                        facade.render_wash(self._wash, self.state, self.drives, self.city,
-                                           now, self._facade_event)
-                        mask = (self._fg.max(axis=2) < 0.06)[..., None]
-                        np.copyto(self.buf, np.where(mask, self._wash, self._fg))
+                        on_bldg = (str(self.expr.cur_id).startswith("building") and
+                                   (self.expr.tgt is None or str(self.expr.tgt_id).startswith("building")))
+                        if on_bldg:
+                            # its own facade already carries its mood through every floor
+                            np.copyto(self.buf, self._fg)
+                        else:
+                            facade.render_wash(self._wash, self.state, self.drives, self.city,
+                                               now, self._facade_event)
+                            mask = (self._fg.max(axis=2) < 0.06)[..., None]
+                            np.copyto(self.buf, np.where(mask, self._wash, self._fg))
                         # beat: the whole facade pulses at the music's tempo (from arousal).
                         bpm = 60 + self.state.arousal * 120
                         self.buf *= 0.86 + 0.14 * (0.5 + 0.5 * math.sin(2 * math.pi * (bpm / 60.0) * now))
@@ -975,6 +998,7 @@ class Being:
             self._cur_spec, self._cur_learnable = None, False
         self.expr.set_render(fn, f"{name}#{self._style_i}", dur=0.5)
         self._hold_until = time.time() + 14
+        self._back_to_building = True
 
     def _react_face(self, expression: str, felt: str = None):
         """Show a crisp emotional FACE reacting to the message just received, and hold it so the
@@ -994,7 +1018,23 @@ class Being:
             self._body_since = time.time()
             self._cur_spec, self._cur_learnable = None, False
         self.expr.set_render(fn, f"reactface#{self._style_i}", dur=0.45)  # snaps in = immediate
-        self._hold_until = time.time() + 14          # lingers so it's clearly a reaction to you
+        self._hold_until = time.time() + 14
+        self._back_to_building = True          # lingers so it's clearly a reaction to you
+
+    def _building_fn(self, buf, t):
+        self.building.render(buf, t, self.state, self.drives, self.city, self.transit,
+                             self._facade_event)
+
+    def _show_building(self, dur: float = 1.4):
+        """Go back to its own body: the Green Building's floors and lit office windows."""
+        self._style_i += 1
+        with self._lock:
+            self._glyph_name = "its own facade"
+            self._last_style = {}
+            self._body_since = time.time()
+            self._cur_spec, self._cur_learnable = None, False
+        self.expr.set_render(self._building_fn, f"building#{self._style_i}", dur=dur)
+        self._back_to_building = False
 
     def _fire_facade(self, kind: str, dur: float = 2.5):
         """Trigger a transient, legible whole-facade gesture (bloom/withdraw/ripple/perk)."""

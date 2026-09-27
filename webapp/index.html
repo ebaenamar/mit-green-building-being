@@ -55,12 +55,12 @@
   </section>
   <section class="col side">
     <div class="pad" style="display:flex;gap:14px;align-items:center">
-      <canvas id="body" width="144" height="272"
-        style="background:#000;border-radius:8px;image-rendering:pixelated;box-shadow:0 0 24px #0008"></canvas>
+      <canvas id="body" width="190" height="380"
+        style="background:#05070d;border-radius:8px;box-shadow:0 0 24px #0008"></canvas>
       <div style="flex:1">
-        <div style="font-size:12px;color:var(--dim);text-transform:uppercase;letter-spacing:.06em">its body — live</div>
+        <div style="font-size:12px;color:var(--dim);text-transform:uppercase;letter-spacing:.06em">its body — the Green Building, live</div>
         <div class="now" style="margin-top:6px">expressing <b id="glyph2">…</b></div>
-        <div class="status" style="margin-top:8px">this pixel body is what the MIT Green Building shows, in real time.</div>
+        <div class="status" style="margin-top:8px">its body is MIT's Building 54: each cell is one of its 153 windows, floor by floor — lit offices are people inside it.</div>
       </div>
     </div>
     <div class="pad bars" id="bars"></div>
@@ -98,13 +98,28 @@ async function pollFrame(){
 function drawBodyRAF(){
   requestAnimationFrame(drawBodyRAF);
   if(!LASTFRAME) return;
-  const f=LASTFRAME, S=Math.floor(bodyCv.width/BW), lvl=audioLevel();
-  const boost=1+lvl*1.4;                          // the body brightens on the beat
+  const f=LASTFRAME, W=bodyCv.width, H=bodyCv.height, lvl=audioLevel(), boost=1+lvl*1.4;
+  const cell=15, gap=3, fw=BW*cell+(BW+1)*gap, fh=BH*cell+(BH+1)*gap;
+  const x0=Math.round((W-fw)/2), y0=H-fh-14, cx=W/2;
+  const sky=bctx.createLinearGradient(0,0,0,H); sky.addColorStop(0,'#03050b'); sky.addColorStop(1,'#0b1222');
+  bctx.fillStyle=sky; bctx.fillRect(0,0,W,H);
+  // its head: the weather-radar dome on the roof, plus a mast
+  bctx.fillStyle='#2b2f37'; bctx.fillRect(x0+fw*0.18,y0-9,fw*0.64,11);
+  const dr=24, dy=y0-9;
+  const dg=bctx.createRadialGradient(cx-9,dy-12,3,cx,dy,dr); dg.addColorStop(0,'#eef1f5'); dg.addColorStop(1,'#8a909a');
+  bctx.fillStyle=dg; bctx.beginPath(); bctx.arc(cx,dy,dr,Math.PI,0); bctx.closePath(); bctx.fill();
+  bctx.fillStyle='#9aa0aa'; bctx.fillRect(x0+fw-14,y0-34,2,26);
+  // its skin: the concrete facade and its 153 windows, floor by floor
+  bctx.fillStyle='#3a3e46'; bctx.fillRect(x0,y0,fw,fh);
   for(let i=0;i<f.cells.length;i++){const r=(i/BW)|0,c=i%BW,p=f.cells[i];
     bctx.fillStyle=`rgb(${Math.min(255,p[0]*boost)|0},${Math.min(255,p[1]*boost)|0},${Math.min(255,p[2]*boost)|0})`;
-    bctx.fillRect(c*S,r*S,S,S);}
+    bctx.fillRect(x0+gap+c*(cell+gap), y0+gap+r*(cell+gap), cell, cell);}
+  // its feet: the lobby on the ground
+  bctx.fillStyle='#15181d'; bctx.fillRect(0,y0+fh,W,H-(y0+fh));
+  bctx.fillStyle='#2b2f37'; bctx.fillRect(x0+fw*0.36,y0+fh,fw*0.28,7);
   if(lvl>0.06){ bctx.strokeStyle=`rgba(255,255,255,${Math.min(0.55,lvl)})`;
-    bctx.lineWidth=2+lvl*7; bctx.strokeRect(3,3,bodyCv.width-6,bodyCv.height-6); }
+    bctx.lineWidth=2+lvl*6; bctx.strokeRect(x0-2,y0-2,fw+4,fh+4); }
+}
 }
 
 async function refreshState(){
