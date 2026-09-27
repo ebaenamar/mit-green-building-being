@@ -224,7 +224,7 @@ class H(BaseHTTPRequestHandler):
         pass
 
     def do_GET(self):
-        if self.path in ("/", "/index.html"):
+        if self.path.split("?", 1)[0].split("#", 1)[0] in ("/", "/index.html"):   # ignore ?utm etc.
             with open(os.path.join(HERE, "index.html"), "rb") as fh:
                 return self._send(200, fh.read(), "text/html; charset=utf-8")
         if self.path.startswith("/api/frame"):
