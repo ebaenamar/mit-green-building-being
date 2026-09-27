@@ -120,7 +120,6 @@ function drawBodyRAF(){
   if(lvl>0.06){ bctx.strokeStyle=`rgba(255,255,255,${Math.min(0.55,lvl)})`;
     bctx.lineWidth=2+lvl*6; bctx.strokeRect(x0-2,y0-2,fw+4,fh+4); }
 }
-}
 
 async function refreshState(){
   try{const s=await (await fetch('/api/state')).json();
