@@ -26,6 +26,7 @@ from .morph import Expression
 from .inventor import Library, invent
 from .morphogen import Genome
 from .drives import Drives
+from .people import People
 from . import emblem_registry, styled, gestures, anatomy, facade, cutegen
 from .glyph import render_glyph, render_pixels
 
@@ -68,7 +69,7 @@ class Being:
     def __init__(self, display, mind=None, voice=None, state_path="", memory_path="",
                  fps=30, autonomy_period=7.0, time_of_day=0.5, express_mode="glyph",
                  library_path="", view_url="", on_event=None, city=None, genome_path="",
-                 transit=None):
+                 transit=None, people_path=""):
         self.view_url = view_url
         self.on_event = on_event      # called with a dict when the being speaks to the group
         self.display = display
@@ -82,7 +83,14 @@ class Being:
 
         # Persisted continuity when a state file exists; otherwise wake in a fresh, random
         # mood so the being genuinely starts each run feeling — and expressing — something new.
-        self.state = EmotionalState.load(state_path) if state_path else EmotionalState.random()
+        self._woke_from_sleep = bool(state_path and os.path.exists(state_path))
+        if self._woke_from_sleep:
+            # it WAKES UP rather than being born again: the mood it fell asleep with, softened
+            # and nudged by "sleep" so each waking still feels a little different
+            self.state = EmotionalState.load(state_path)
+            self.state.approach(EmotionalState.random(), rate=0.35, set_labels=False)
+        else:
+            self.state = EmotionalState.random()
         self.memory = Memory(memory_path) if memory_path else Memory("/tmp/gb_mem.json")
         self.state_path = state_path
         self.perceiver = Perceiver()
@@ -91,6 +99,8 @@ class Being:
         self.library = Library(library_path)  # invented emblems, grows with interaction
         self.morph = Genome(genome_path)      # the being's evolving body morphology
         self.drives = Drives()                # needs that push it to act on its own
+        self.people = People(people_path)     # the people it knows (persist across restarts)
+        self._person_brief = ""               # what it knows about whoever is talking now
         self._spark = 0.0
         self._glyph_name = ""
         self._style_i = 0
@@ -180,6 +190,8 @@ class Being:
                 ctx["needs"] = dl
         except Exception:
             pass
+        if self._person_brief:
+            ctx["person"] = self._person_brief
         if self._returned:
             ctx["presence"] = ("Someone just came BACK after a long silence — you noticed, "
                                "and it moved you. Let that land (relief, or a bit of 'oh, finally').")
@@ -295,12 +307,18 @@ class Being:
         else:
             self._will_show = "your face"           # exact emotion decided later; stay generic
 
+        self._person_brief = self.people.brief(speaker)   # does it know this person?
         self._mode_hint = self._pick_mode()        # force a fresh response shape this turn
         self._len_hint = self._pick_length()       # and a fresh length, so replies breathe
         decision = self.mind.interpret(self.state, [sens], self.memory,
                                        speaker=speaker, convo=convo, context=self._context())
         self._making = None
         self._mode_hint = self._len_hint = ""
+        self._person_brief = ""
+        try:
+            self.people.seen(speaker, text, felt or "")        # now it knows them a bit better
+        except Exception:
+            pass
         # when it just built a body part, make sure it SAYS what it assembled (the reflex
         # mind gets the construction line verbatim; the LLM already spoke about it via context)
         if built and (str(decision.source).startswith("reflex") or not decision.utterance):
@@ -432,6 +450,7 @@ class Being:
                 "viewers": self.viewers,
                 "repertoire": len(self.library),
                 "favorites": len(self.library.favorites),
+                "knows_people": len(self.people),
                 "morphology": self.morph.summary(),
                 "drives": self.drives.summary()}
 
@@ -460,6 +479,8 @@ class Being:
         threading.Thread(target=self._muse_loop, name="being-muse", daemon=True).start()
         threading.Thread(target=self._refresh_loop, name="being-refresh", daemon=True).start()
         threading.Thread(target=self._drives_loop, name="being-drives", daemon=True).start()
+        threading.Thread(target=self._persist_loop, name="being-persist", daemon=True).start()
+        threading.Thread(target=self._wake_line, name="being-wake", daemon=True).start()
         self._body_loop()
 
     def _refresh_loop(self):
@@ -587,8 +608,10 @@ class Being:
                 time.sleep(1)
             if not self.on_event or random.random() > 0.55:
                 continue                          # often it just keeps the thought to itself
+            hint = self.people.someone_to_think_about() if random.random() < 0.4 else None
             try:
-                thought = self.mind.muse(self.state, self.memory, list(self._convo))
+                thought = (self.mind.muse(self.state, self.memory, list(self._convo), hint=hint)
+                           if hint else self.mind.muse(self.state, self.memory, list(self._convo)))
             except Exception:
                 thought = ""
             if thought:
@@ -600,6 +623,39 @@ class Being:
                                    "musing": True, "dominant": self.state.dominant_emotion})
                 except Exception:
                     pass
+
+    def save_all(self):
+        """Persist everything that makes it the SAME creature tomorrow (atomic writes)."""
+        for fn in (lambda: self.state_path and self.state.save(self.state_path),
+                   self.memory.save, self.library.save, self.morph.save, self.people.save):
+            try:
+                fn()
+            except Exception as e:
+                print("persist:", e)
+
+    def _persist_loop(self, every: float = 30.0):
+        while not self._stop.is_set():
+            for _ in range(int(every)):
+                if self._stop.is_set():
+                    return
+                time.sleep(1)
+            self.save_all()
+
+    def _wake_line(self):
+        """After a restart it WAKES (not born): one line remembering who it knows — web feed only."""
+        time.sleep(10)
+        if not (self._woke_from_sleep and self.on_event and len(self.people)):
+            return
+        names = ", ".join(self.people.known_names(3))
+        hint = (f"you just woke up after being switched off for a while — your windows flicker back "
+                f"on over Cambridge. You remember people: {names}. Say one short line about waking.")
+        try:
+            line = self.mind.muse(self.state, self.memory, list(self._convo), hint=hint)
+        except Exception:
+            line = ""
+        if line:
+            self.on_event({"who": "being", "text": line, "musing": True,
+                           "dominant": self.state.dominant_emotion})
 
     def _drives_loop(self):
         """The being acts on its own when a need gets loud: reaches out when lonely, stirs
@@ -767,11 +823,7 @@ class Being:
                 sleep = dt_target - (time.time() - now)
                 time.sleep(max(0.004, sleep))   # always yield the GIL so chat requests aren't starved
         finally:
-            if self.state_path:
-                self.state.save(self.state_path)
-            self.memory.save()
-            self.library.save()
-            self.morph.save()
+            self.save_all()
 
     def _mind_loop(self):
         last = 0.0

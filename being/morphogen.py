@@ -19,6 +19,7 @@ import json
 import os
 import random
 import time
+from .jsonio import atomic_write
 
 # gene -> (low, high, init). Kept semantic and bounded so forms stay recognizable.
 GENES = {
@@ -158,13 +159,8 @@ class Genome:
     def save(self):
         if not self.path:
             return
-        try:
-            os.makedirs(os.path.dirname(self.path), exist_ok=True)
-            with open(self.path, "w") as fh:
-                json.dump({"base": self.base, "age": round(self.age, 1),
-                           "imprints": self.imprints}, fh, indent=2)
-        except OSError:
-            pass
+        atomic_write(self.path, {"base": self.base, "age": round(self.age, 1),
+                                 "imprints": self.imprints}, indent=2)
 
 
 def default_params(part: str = "") -> dict:

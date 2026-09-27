@@ -17,6 +17,7 @@ import os
 
 from .specs import GLYPHS, EMOTION_GLYPH
 from .glyph import _col
+from .jsonio import atomic_write
 
 # words humans might say -> a seed the feeling can *reach for* (transformed, not mirrored)
 NOUN_BIAS = {
@@ -136,9 +137,11 @@ class Library:
         except (OSError, ValueError):
             pass
 
-    def remember(self, name, glyph):
+    def remember(self, name, glyph, keep=300):
         if name not in self.glyphs:
             self.glyphs[name] = glyph
+            while len(self.glyphs) > keep:              # the loose bag stays bounded (oldest out)
+                self.glyphs.pop(next(iter(self.glyphs)))
 
     def learn(self, name, spec, state):
         """Consolidate a form the being held long enough, tagged with the current mood, so
@@ -200,10 +203,8 @@ class Library:
     def save(self):
         if not self.path:
             return
-        os.makedirs(os.path.dirname(self.path), exist_ok=True)
-        with open(self.path, "w") as fh:
-            json.dump({"glyphs": self.glyphs, "forms": self.forms,
-                       "favorites": self.favorites}, fh)
+        atomic_write(self.path, {"glyphs": self.glyphs, "forms": self.forms,
+                                 "favorites": self.favorites})
 
     def __len__(self):
         return len(self.glyphs)

@@ -22,7 +22,9 @@ _NEG = set(("hate angry fear dark cold cruel sad lonely alone pain hurt bad "
             # español
             "triste tristeza solo sola miedo dolor mal malo odio llorar lloro muerte "
             "muerto cansado cansada enfermo enferma perdido perdida roto rota adios harto "
-            "harta asustado asustada asusta susto preocupado preocupada vacio vacia solo").split())
+            "harta asustado asustada asusta susto preocupado preocupada vacio vacia solo "
+            "nervioso nerviosa ansioso ansiosa estresado estresada agobiado agobiada "
+            "nervous anxious stressed worried overwhelmed").split())
 _HIGH = set(("run fast now loud jump fight chase chasing burn explode wild storm scream "
              "chaos dance quick hurry go energy danger voices shout many attack play "
              # español

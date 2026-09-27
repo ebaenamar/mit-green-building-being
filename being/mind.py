@@ -526,6 +526,8 @@ class LlmMind:
             bodyline += f"BUILDING NOW: {ctx['making']}\n"
         if ctx.get("needs"):
             bodyline += f"WHAT YOU NEED RIGHT NOW: {ctx['needs']} — let it color your voice.\n"
+        if ctx.get("person"):
+            bodyline += f"WHO THIS IS TO YOU: {ctx['person']}\n"
         if ctx.get("presence"):
             bodyline += f"PRESENCE: {ctx['presence']}\n"
         if ctx.get("watched"):

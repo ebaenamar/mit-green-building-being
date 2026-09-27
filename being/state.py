@@ -113,9 +113,8 @@ class EmotionalState:
         return cls(**{k: v for k, v in d.items() if k in known})
 
     def save(self, path: str) -> None:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w") as fh:
-            json.dump(self.to_dict(), fh, indent=2)
+        from .jsonio import atomic_write
+        atomic_write(path, self.to_dict(), indent=2)
 
     @classmethod
     def load(cls, path: str) -> "EmotionalState":

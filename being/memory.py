@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import time
+from .jsonio import atomic_write
 
 
 class Memory:
@@ -25,9 +26,7 @@ class Memory:
             self.traces = []
 
     def save(self):
-        os.makedirs(os.path.dirname(self.path), exist_ok=True)
-        with open(self.path, "w") as fh:
-            json.dump(self.traces[-self.capacity:], fh, indent=2)
+        atomic_write(self.path, self.traces[-self.capacity:], indent=2)
 
     def remember(self, text: str, importance: float = 0.5, mood: str = "",
                  influence: bool = True):

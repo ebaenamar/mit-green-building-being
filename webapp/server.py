@@ -92,6 +92,8 @@ BEING = Being(DISPLAY, mind=make_mind(prefer_llm=True), voice=None,
               memory_path=os.path.join(HERE, "..", "data", "web_mem.json"),
               library_path=os.path.join(HERE, "..", "data", "web_glyphs.json"),
               genome_path=os.path.join(HERE, "..", "data", "web_morph.json"),
+              state_path=os.path.join(HERE, "..", "data", "web_state.json"),   # wakes, not reborn
+              people_path=os.path.join(HERE, "..", "data", "web_people.json"),
               express_mode="glyph", view_url=VIEW, on_event=push, city=CITY, transit=TRANSIT,
               fps=int(os.environ.get("GB_FPS", "15")),   # lower fps frees the GIL for chat requests
               autonomy_period=float(os.environ.get("GB_AUTONOMY", "26")))
@@ -291,6 +293,16 @@ def main():
         threading.Thread(target=tg_poll, name="telegram", daemon=True).start()
     # bigger listen backlog so a burst of dozens of simultaneous connections isn't refused
     # (default request_queue_size is 5 -> the rest get 502 under load)
+    # Render sends SIGTERM on every redeploy: save everything first, so it wakes up as itself
+    import signal
+
+    def _graceful(signum, frame):
+        print("SIGTERM: saving memory, people, favourites, genome, mood…")
+        try:
+            BEING.save_all()
+        finally:
+            os._exit(0)
+    signal.signal(signal.SIGTERM, _graceful)
     ThreadingHTTPServer.request_queue_size = 256
     ThreadingHTTPServer.daemon_threads = True
     srv = ThreadingHTTPServer(("0.0.0.0", port), H)
