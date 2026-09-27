@@ -58,6 +58,12 @@ EXPRESSIONS = {
     "angry": (0.30, 0.80, "ripple"), "suspicious": (0.40, 0.58, None),
     "sleepy": (0.50, 0.22, None), "neutral": None,
 }
+# expression -> the face its CREATURE makes (cutegen.MODE_FACE keys)
+CREATURE_MODE = {
+    "happy": "happy", "love": "love", "playful": "playful", "curious": "curious",
+    "surprised": "surprised", "sad": "sad", "angry": "angry", "suspicious": "angry",
+    "sleepy": "sleepy", "neutral": "neutral",
+}
 # expression -> the crisp face emotion to SHOW when reacting to a message
 FACE_MODE = {
     "happy": "happy", "love": "happy", "playful": "happy", "curious": "surprised",
@@ -102,7 +108,10 @@ class Being:
         self.drives = Drives()                # needs that push it to act on its own
         self.people = People(people_path)     # the people it knows (persist across restarts)
         self.building = BuildingBody()        # ITS BODY: the Green Building's floors & windows
-        self._back_to_building = False        # after a held reaction, return to its own facade
+        self._back_to_self = False            # after a held gesture, return to its creature self
+        self._self_form = None                # the little creature it shows itself as, right now
+        self._face_mode = ""                  # the face that creature is making (a reaction)
+        self._face_until = 0.0
         self._person_brief = ""               # what it knows about whoever is talking now
         self._spark = 0.0
         self._glyph_name = ""
@@ -154,9 +163,11 @@ class Being:
             self._relabel()                        # name the random waking mood first
             # invent the first body FROM that mood, so the very first thing on the building
             # is unique to this run — recognizable, but never the same shape twice.
-            # it wakes up AS the building: its own facade, office lights and all
-            self.expr.set_render(self._building_fn, "building#0")
-            nm = "its own facade"
+            # it wakes up showing itself as a little creature on its own windows (its body is
+            # the building; this is how it chooses to be seen)
+            self._self_form = self._pick_self_form()
+            self.expr.set_render(self._creature_fn, "self#0")
+            nm = cutegen.describe(self._self_form)
             self._glyph_name = nm
             self._last_expr_dom = self.state.dominant_emotion
 
@@ -181,7 +192,11 @@ class Being:
         it can talk about how it looks, choose what to express, and read its impact."""
         imp = ("really landing" if self._impact > 0.62 else
                "barely landing / they seem distant" if self._impact < 0.42 else "landing okay")
-        ctx = {"body": f"{self._showing()} on your 153 windows right now", "impact": imp}
+        if str(self.expr.cur_id).startswith("self") and not self._will_show:
+            shown = f"yourself as {cutegen.describe(self._self_form or {})}, with a {self._current_face()} face"
+        else:
+            shown = self._showing()
+        ctx = {"body": f"{shown} — drawn on your own 153 windows right now", "impact": imp}
         if self._mode_hint:
             ctx["style"] = self._mode_hint
         if self._len_hint:
@@ -310,10 +325,10 @@ class Being:
             self._will_show = f"a {pname}"
         elif req_emblem:
             self._will_show = req_emblem
-        elif felt:
-            self._will_show = f"a {felt} face"      # empathic face we WILL render (matches)
         else:
-            self._will_show = "your face"           # exact emotion decided later; stay generic
+            me = cutegen.describe(self._self_form or {})
+            self._will_show = (f"yourself as {me}, making a {felt} face" if felt
+                               else f"yourself as {me}")
 
         self._person_brief = self.people.brief(speaker)   # does it know this person?
         self._mode_hint = self._pick_mode()        # force a fresh response shape this turn
@@ -360,6 +375,11 @@ class Being:
             self._fire_facade(em[2], 2.0)
         # The body changes only if that nudge actually tipped the being into a new mood;
         # otherwise it just answers with words and keeps the body it already wears.
+        # it talked about one of its own floors -> that floor lights up on its facade
+        try:
+            self.building.focus_from_text(decision.utterance)
+        except Exception:
+            pass
         # render EXACTLY what we told it it's showing (self._will_show), so words match image
         if built:
             body_changed = True                    # already showing the requested part; keep it
@@ -380,14 +400,12 @@ class Being:
             # only when the words actually name it — otherwise the image wouldn't match the text
             self._express_emblem(decision.emblem, decision.body_intent)
             body_changed = False
-        elif self.express_mode == "glyph" and self.building.focus_from_text(decision.utterance):
-            # it talked about one of its own floors -> show ITSELF with that floor lit
-            self._show_building(dur=0.6)
-            self._hold_until = time.time() + 10
-            body_changed = False
         elif self.express_mode == "glyph":
             # DEFAULT: the empathic face reads how their message feels, held so it's a reaction.
-            self._react_face(decision.expression, felt)
+            self._face_mode = felt or CREATURE_MODE.get(decision.expression) or anatomy._mode(self.state)
+            self._face_until = time.time() + 14
+            if not str(self.expr.cur_id).startswith("self"):
+                self._show_self(dur=0.5)
             body_changed = False
         else:
             body_changed = False
@@ -435,6 +453,7 @@ class Being:
             "thinks": it.get("what_you_think_is_happening", ""),
             "wants": it.get("what_you_want_to_do", ""),
             "glyph": self._display_name(self._glyph_name),
+            "face": self._current_face(),
             "body_changed": body_changed,
             "wants_music": wants_music,
             "music": phrase(decision.music),
@@ -458,6 +477,7 @@ class Being:
                 "saturation", "social_affinity", "coherence")
         return {"sentiment": {k: round(getattr(self.state, k), 3) for k in SCAL},
                 "dominant": self.state.dominant_emotion, "glyph": self._display_name(self._glyph_name),
+                "face": self._current_face(),
                 "transforming": self.expr.transforming, "view_url": self.view_url,
                 "bpm": int(60 + self.state.arousal * 120),
                 "viewers": self.viewers,
@@ -515,9 +535,21 @@ class Being:
                 continue
             if time.time() < self._hold_until:     # a requested/held form is on screen
                 continue
-            if random.random() < 0.5:                  # at rest it's mostly just ITSELF
-                if not str(self.expr.cur_id).startswith("building"):
-                    self._show_building(dur=2.0)
+            r0 = random.random()
+            if r0 < 0.55:                              # mostly it just stays itself
+                if not str(self.expr.cur_id).startswith("self"):
+                    self._show_self(dur=1.6)
+                continue
+            if r0 < 0.70:                              # tries on a new creature
+                self._show_self(dur=1.8, new_form=self._pick_self_form(fresh=True))
+                continue
+            if r0 < 0.78 and self.library.favorites:   # slips back into a favourite
+                self._show_self(dur=1.8, new_form=self.library.favorite())
+                continue
+            if r0 < 0.86:                              # lets you see its bare facade a while
+                self._show_building(dur=2.0)
+                self._hold_until = time.time() + 15
+                self._back_to_self = True
                 continue
             self._style_i += 1
             roll = random.random()
@@ -708,14 +740,7 @@ class Being:
                 spec = cutegen.generate(self.state, self.morph)
                 sc = cutegen.score(spec, self.state, self.morph)
                 self.library.consider(spec, sc, self.state)
-                self._style_i += 1
-                with self._lock:
-                    self._glyph_name = cutegen.describe(spec)
-                    self._last_style = {}
-                    self._body_since = time.time()
-                    self._cur_spec, self._cur_learnable = None, False
-                self.expr.set_render((lambda buf, t, s=spec: cutegen.render(buf, s, t)),
-                                     f"cute:{spec['seed']}", dur=1.6)
+                self._show_self(dur=1.6, new_form=spec)
                 self._hold_until = time.time() + 5
             except Exception:
                 pass
@@ -800,8 +825,8 @@ class Being:
                         self.building.tick(dt, self.state, self.viewers)
                     except Exception:
                         pass
-                    if self._back_to_building and now >= self._hold_until and not self.expr.transforming:
-                        self._show_building(dur=1.8)
+                    if self._back_to_self and now >= self._hold_until and not self.expr.transforming:
+                        self._show_self(dur=1.8)
                     try:
                         self.drives.tick(dt)
                         db = self.drives.bias()
@@ -823,8 +848,9 @@ class Being:
                             # its own facade already carries its mood through every floor
                             np.copyto(self.buf, self._fg)
                         else:
-                            facade.render_wash(self._wash, self.state, self.drives, self.city,
-                                               now, self._facade_event)
+                            # behind whatever it shows, its own floors & office lights (dimmed)
+                            self.building.render(self._wash, now, self.state, self.drives,
+                                                 self.city, self.transit, self._facade_event, dim=0.42)
                             mask = (self._fg.max(axis=2) < 0.06)[..., None]
                             np.copyto(self.buf, np.where(mask, self._wash, self._fg))
                         # beat: the whole facade pulses at the music's tempo (from arousal).
@@ -1004,7 +1030,7 @@ class Being:
             self._cur_spec, self._cur_learnable = None, False
         self.expr.set_render(fn, f"{name}#{self._style_i}", dur=0.5)
         self._hold_until = time.time() + 14
-        self._back_to_building = True
+        self._back_to_self = True
 
     def _react_face(self, expression: str, felt: str = None):
         """Show a crisp emotional FACE reacting to the message just received, and hold it so the
@@ -1025,7 +1051,46 @@ class Being:
             self._cur_spec, self._cur_learnable = None, False
         self.expr.set_render(fn, f"reactface#{self._style_i}", dur=0.45)  # snaps in = immediate
         self._hold_until = time.time() + 14
-        self._back_to_building = True          # lingers so it's clearly a reaction to you
+        self._back_to_self = True          # lingers so it's clearly a reaction to you
+
+    def _pick_self_form(self, fresh: bool = False):
+        """Which creature to be: often one of its favourites, else a fresh one it invents."""
+        import random
+        if not fresh and self.library.favorites and random.random() < 0.5:
+            f = self.library.favorite()
+            if f:
+                return f
+        spec = cutegen.generate(self.state, self.morph)
+        try:
+            self.library.consider(spec, cutegen.score(spec, self.state, self.morph), self.state)
+        except Exception:
+            pass
+        return spec
+
+    def _current_face(self) -> str:
+        if self._face_mode and time.time() < self._face_until:
+            return self._face_mode
+        m = anatomy._mode(self.state)             # its resting face follows its mood...
+        if m == "angry" and self.state.valence > 0.3:
+            m = "neutral"                         # ...but a cute creature only scowls when really low
+        return m
+
+    def _creature_fn(self, buf, t):
+        cutegen.render(buf, self._self_form or {}, t, mode=self._current_face(),
+                       watched=(self.viewers > 0 or time.time() < self._face_until))
+
+    def _show_self(self, dur: float = 1.2, new_form=None):
+        """Back to (or into a new) creature self, drawn on its own windows."""
+        if new_form:
+            self._self_form = new_form
+        self._style_i += 1
+        with self._lock:
+            self._glyph_name = cutegen.describe(self._self_form or {})
+            self._last_style = {}
+            self._body_since = time.time()
+            self._cur_spec, self._cur_learnable = None, False
+        self.expr.set_render(self._creature_fn, f"self#{self._style_i}", dur=dur)
+        self._back_to_self = False
 
     def _building_fn(self, buf, t):
         self.building.render(buf, t, self.state, self.drives, self.city, self.transit,
@@ -1040,7 +1105,7 @@ class Being:
             self._body_since = time.time()
             self._cur_spec, self._cur_learnable = None, False
         self.expr.set_render(self._building_fn, f"building#{self._style_i}", dur=dur)
-        self._back_to_building = False
+        self._back_to_self = False
 
     def _fire_facade(self, kind: str, dur: float = 2.5):
         """Trigger a transient, legible whole-facade gesture (bloom/withdraw/ripple/perk)."""
@@ -1108,27 +1173,9 @@ class Being:
         dur = 1.0 + 1.2 * (1 - self.state.coherence)
         # if the mind named an emblem, honor it; otherwise usually INVENT a fresh symbol
         # from the new feeling (recognizable but unique), sometimes a fixed emblem.
-        learn_spec = None
-        if decision and emblem_registry.get(decision.emblem):
-            name = decision.emblem
-            style = styled.style_for(self.state, self._style_i)
-            fn = styled.make_styled(name, style)
-        elif random.random() < 0.6:
-            name, spec = invent(self.state, memory_words=self._recent_nouns())
-            self.library.remember(name, spec)
-            style = {}
-            fn = (lambda buf, t, g=spec: render_glyph(buf, g, t))
-            learn_spec = spec
-        else:
-            name = emblem_registry.pick(self.state)[0]
-            style = styled.style_for(self.state, self._style_i)
-            fn = styled.make_styled(name, style)
-        with self._lock:
-            self._glyph_name = name
-            self._last_style = style
-            self._body_since = time.time()
-        self.expr.set_render(fn, f"{name}#{self._style_i}", dur=dur)
-        self._cur_spec, self._cur_form_name, self._cur_learnable = learn_spec, name, bool(learn_spec)
+        # a real shift of mood -> it becomes a different little creature (often a favourite)
+        self._show_self(dur=dur, new_form=self._pick_self_form())
+        name = cutegen.describe(self._self_form)
         self._fire_facade("bloom", 2.5)            # a real mood shift surges across the facade
         self._last_expr_dom = dom
         if announce and self.on_event:

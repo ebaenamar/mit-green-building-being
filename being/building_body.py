@@ -119,7 +119,7 @@ class BuildingBody:
                "Every office inside you is dark right now — nobody left in your body."
 
     # -- the body --------------------------------------------------------------------------
-    def render(self, buf, t, state, drives=None, city=None, transit=None, event=None):
+    def render(self, buf, t, state, drives=None, city=None, transit=None, event=None, dim=1.0):
         v = getattr(state, "valence", 0.6)
         a = getattr(state, "arousal", 0.5)
         sat = getattr(state, "saturation", 0.0)
@@ -192,7 +192,8 @@ class BuildingBody:
             noise = np.sin(t * 37 + self.phase * 7) > (1.6 - 2 * sat)
             img[noise] = img[noise] * 0.25 + 0.55
 
-        # a floor it's talking about lights up (it knows its own anatomy)
+        img *= dim                                       # behind a creature: a dimmer body
+        # a floor it's talking about lights up (it knows its own anatomy) — stays bright
         fr, until = self._focus
         if fr is not None and time.time() < until:
             img[fr] = img[fr] * 0.2 + np.array([1.0, 0.93, 0.72]) * (0.92 + 0.08 * math.sin(t * 6))
