@@ -160,15 +160,21 @@ class Being:
             self._glyph_name = nm
             self._last_expr_dom = self.state.dominant_emotion
 
-    def _showing(self) -> str:
-        """One CLEAN description of what's on the windows this turn — never an internal code
-        like 'playful-starxkey-0f8'. Prefers what we're about to show this reply."""
+    @staticmethod
+    def _display_name(raw: str) -> str:
+        """Human name for what's on its windows — never an internal code. 'playful-starxkey-775'
+        -> 'a star-and-key sign'; everything else passes through."""
         import re
-        raw = (self._will_show or self._glyph_name or "your lit windows").strip()
-        # invented-glyph codes ('playful-star-c57', 'playful-starxkey-0f8') -> generic + honest
-        if " " not in raw and re.search(r"-\w{2,4}$", raw):
-            return "a shape of light"
+        raw = (raw or "").strip()
+        if raw and " " not in raw and re.search(r"-\w{2,4}$", raw):
+            parts = raw.split("-")
+            seeds = [p for p in (parts[1] if len(parts) > 2 else "").split("x") if p]
+            return ("a " + "-and-".join(seeds) + " sign made of my windows") if seeds else "a shape of light"
         return raw
+
+    def _showing(self) -> str:
+        """One CLEAN description of what's on the windows this turn (prefers this reply's form)."""
+        return self._display_name(self._will_show or self._glyph_name) or "your lit windows"
 
     def _context(self) -> dict:
         """What the being knows about its own body + how it's landing — fed to the mind so
@@ -428,7 +434,7 @@ class Being:
             "feels": it.get("what_you_feel", ""),
             "thinks": it.get("what_you_think_is_happening", ""),
             "wants": it.get("what_you_want_to_do", ""),
-            "glyph": self._glyph_name,
+            "glyph": self._display_name(self._glyph_name),
             "body_changed": body_changed,
             "wants_music": wants_music,
             "music": phrase(decision.music),
@@ -451,7 +457,7 @@ class Being:
         SCAL = ("arousal", "valence", "curiosity", "openness", "confidence",
                 "saturation", "social_affinity", "coherence")
         return {"sentiment": {k: round(getattr(self.state, k), 3) for k in SCAL},
-                "dominant": self.state.dominant_emotion, "glyph": self._glyph_name,
+                "dominant": self.state.dominant_emotion, "glyph": self._display_name(self._glyph_name),
                 "transforming": self.expr.transforming, "view_url": self.view_url,
                 "bpm": int(60 + self.state.arousal * 120),
                 "viewers": self.viewers,
