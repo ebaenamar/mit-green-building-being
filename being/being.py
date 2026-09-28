@@ -171,7 +171,8 @@ class Being:
             if clip:
                 # every (re)start opens with the Sundai sundae, then it becomes its creature
                 self.expr.set_render(splash.make_render(clip), "splash#0")
-                self._hold_until = time.time() + float(os.environ.get("GB_SPLASH_SECS", "6"))
+                # long enough to still be on when Render routes web traffic back (~12s after boot)
+                self._hold_until = time.time() + float(os.environ.get("GB_SPLASH_SECS", "18"))
                 self._back_to_self = True
                 nm = "the Sundai sundae"
             else:
