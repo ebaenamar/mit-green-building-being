@@ -28,6 +28,7 @@ from .morphogen import Genome
 from .drives import Drives
 from .people import People
 from .building_body import BuildingBody
+from . import splash
 from . import emblem_registry, styled, gestures, anatomy, facade, cutegen
 from .glyph import render_glyph, render_pixels
 
@@ -166,8 +167,16 @@ class Being:
             # it wakes up showing itself as a little creature on its own windows (its body is
             # the building; this is how it chooses to be seen)
             self._self_form = self._pick_self_form()
-            self.expr.set_render(self._creature_fn, "self#0")
-            nm = cutegen.describe(self._self_form)
+            clip = None if os.environ.get("GB_SPLASH", "").lower() in ("off", "0", "no") else splash.load_clip()
+            if clip:
+                # every (re)start opens with the Sundai sundae, then it becomes its creature
+                self.expr.set_render(splash.make_render(clip), "splash#0")
+                self._hold_until = time.time() + float(os.environ.get("GB_SPLASH_SECS", "6"))
+                self._back_to_self = True
+                nm = "the Sundai sundae"
+            else:
+                self.expr.set_render(self._creature_fn, "self#0")
+                nm = cutegen.describe(self._self_form)
             self._glyph_name = nm
             self._last_expr_dom = self.state.dominant_emotion
 
@@ -842,8 +851,9 @@ class Being:
                         # the WHOLE facade carries mood (legible at 90 m): fill every window
                         # with a living mood field, then composite the face over it so the
                         # dead black background becomes a breathing, autonomous body.
-                        on_bldg = (str(self.expr.cur_id).startswith("building") and
-                                   (self.expr.tgt is None or str(self.expr.tgt_id).startswith("building")))
+                        _raw = ("building", "splash")    # shown exactly as-is, no backdrop
+                        on_bldg = (str(self.expr.cur_id).startswith(_raw) and
+                                   (self.expr.tgt is None or str(self.expr.tgt_id).startswith(_raw)))
                         if on_bldg:
                             # its own facade already carries its mood through every floor
                             np.copyto(self.buf, self._fg)
