@@ -383,9 +383,26 @@ _GLM_URL = os.environ.get("GLM_BASE_URL", "https://api.z.ai/api/paas/v4") + "/ch
 # OpenRouter free models, fastest/most reliable first (override with OPENROUTER_MODELS)
 _OR_DEFAULT = ("nvidia/nemotron-3-super-120b-a12b:free,poolside/laguna-s-2.1:free,"
                "nvidia/nemotron-3-ultra-550b-a55b:free")
+# The FAST schema: only what the body actually uses. The full one made models write ~450-700
+# tokens of JSON per reply (latency is dominated by output tokens) for a ~30-token sentence.
+SCHEMA_FAST = """Respond with ONLY a compact JSON object (no prose), keys in this order:
+{"utterance":"your reply in YOUR voice — obey the LENGTH directive (mostly short, NEVER over ~50 words)",
+ "appraisal":{"novelty":0..1,"pleasantness":0..1,"goal_conduciveness":0..1,"coping":0..1,
+   "self_compatibility":0..1,"attention_to_me":0..1},
+ "expression":"neutral|happy|sad|angry|surprised|sleepy|playful|suspicious|love|curious — MUST match how THIS moment feels",
+ "emblem":"",
+ "remember":"",
+ "music_wish":""}
+appraisal: your honest reading of what reached you — your emotion follows FROM it.
+emblem: leave "" unless your words say you're SHOWING one of: {EMBLEMS}.
+remember: "" unless there's something worth keeping about this person (a name, a fact, a feeling).
+music_wish: "" almost always. Numbers as plain decimals. No other keys."""
+_FAST = os.environ.get("GB_FAST_SCHEMA", "on").lower() not in ("off", "0", "no")
+
 _ONLY_JSON = {"role": "user", "content": "Reply with ONLY the JSON object — no reasoning, "
-              "no preamble, no markdown. Fill at least: appraisal, emotional_state, expression, "
-              "voice.utterance, emblem."}
+              "no preamble, no markdown." + (" Keys: utterance, appraisal, expression, emblem, remember, "
+              "music_wish." if _FAST else " Fill at least: appraisal, emotional_state, expression, "
+              "voice.utterance, emblem.")}
 
 
 def _extract_json(text: str) -> dict:
@@ -411,7 +428,7 @@ class FreeLLM:
     """A chain of FREE model providers (OpenRouter free models + Zhipu GLM-4.5-flash). Free
     endpoints are flaky, so it tries them in a mode-specific order, validates the reply, puts a
     provider that 429s on a 60 s cooldown, and raises only if every one fails.
-      mode='human' : fastest first (someone is waiting)
+      mode='human' : OPENROUTER_MODELS in order (someone is waiting; GB_HUMAN_TIMEOUT per try)
       mode='idle'  : GLM first (latency doesn't matter; spares OpenRouter's daily free cap)
     """
 
@@ -427,13 +444,13 @@ class FreeLLM:
         if okey:
             for i, m in enumerate([x.strip() for x in os.environ.get("OPENROUTER_MODELS", _OR_DEFAULT).split(",") if x.strip()]):
                 ps.append({"name": m.split("/")[-1], "url": _OR_URL, "key": okey, "model": m,
-                           "extra": {"reasoning": {"enabled": False}},
+                           "extra": {"reasoning": {"enabled": False}}, "json_ok": True,
                            "human": (0 if i == 0 else 2 + i), "idle": 1 + i})
         gkey = (os.environ.get("GLM_API_KEY") or os.environ.get("ZAI_API_KEY") or "").strip()
         if gkey:
             ps.append({"name": "glm-4.5-flash", "url": _GLM_URL, "key": gkey,
                        "model": os.environ.get("GLM_MODEL", "glm-4.5-flash"),
-                       "extra": {"thinking": {"type": "disabled"}}, "human": 1, "idle": 0})
+                       "extra": {"thinking": {"type": "disabled"}}, "human": 90, "idle": 0})
         return cls(ps) if ps else None
 
     def _order(self, mode):
@@ -443,12 +460,17 @@ class FreeLLM:
         lk = self.last_ok.get(mode)
         return sorted(ps, key=lambda p: 0 if p["name"] == lk else 1)
 
-    def chat(self, messages, mode="human", max_tokens=1500, temperature=0.9, validate=None):
+    def chat(self, messages, mode="human", max_tokens=1500, temperature=0.9, validate=None,
+             json_mode=False):
         err = None
-        timeout = 20 if mode == "human" else 45
+        # someone is waiting: if the first (personality) model stalls, the next one answers
+        timeout = float(os.environ.get("GB_HUMAN_TIMEOUT", "8")) if mode == "human" else 45
         for p in self._order(mode):
             body = json.dumps({"model": p["model"], "messages": messages, "temperature": temperature,
-                               "max_tokens": max_tokens, **p["extra"]}).encode()
+                               "max_tokens": max_tokens, **p["extra"],
+                               # JSON mode where supported: free models broke JSON 2 of 3 times
+                               **({"response_format": {"type": "json_object"}}
+                                  if (json_mode and p.get("json_ok")) else {})}).encode()
             hdr = {"Content-Type": "application/json", "Authorization": f"Bearer {p['key']}"}
             if p["url"] == _OR_URL:
                 hdr.update({"HTTP-Referer": "https://green-being.onrender.com",
@@ -569,7 +591,7 @@ class LlmMind:
                 f"{who}\n"
                 f"MEMORY (important traces): {memory.recall_text(6)}{recent}\n"
                 f"NEW SENSATIONS:\n{sens}\n\n"
-                + SCHEMA.replace("{EMBLEMS}", ", ".join(EMBLEM_NAMES))
+                + (SCHEMA_FAST if _FAST else SCHEMA).replace("{EMBLEMS}", ", ".join(EMBLEM_NAMES))
                 + "\n\nFINAL, OBEY: You are the Green Building, not an assistant. The 'utterance' "
                   "length follows the LENGTH directive above (mostly short, sometimes a small "
                   "riff, NEVER over ~50 words). GROUND it in one CONCRETE real thing — the actual "
@@ -611,7 +633,8 @@ class LlmMind:
                    mode="human") -> Decision:
         msgs = self._messages(state, sensations, memory, speaker, convo, context) + [_ONLY_JSON]
         with _LLM_SEM:
-            content, name = self.free.chat(msgs, mode=mode, validate=_require_utterance)
+            content, name = self.free.chat(msgs, mode=mode, validate=_require_utterance,
+                                           max_tokens=(600 if _FAST else 1500), json_mode=True)
         d = _decision_from_llm(_extract_json(content))
         d.source = f"free:{name}"
         return d
@@ -688,6 +711,8 @@ def _decision_from_llm(obj: dict) -> Decision:
     mem = obj.get("memory_update", {}) or {}
     if not isinstance(mem, dict):
         mem = {}
+    if not mem and isinstance(obj.get("remember"), str) and obj["remember"].strip():
+        mem = {"what_to_remember": obj["remember"].strip()[:200], "importance": 0.6}
     voice = obj.get("voice", {}) or {}
     if not isinstance(voice, dict):
         voice = {"utterance": str(voice)}

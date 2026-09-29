@@ -22,7 +22,7 @@ from .render import ZeldaWorld, ROWS, COLS
 from .perception import Perceiver
 from .memory import Memory
 from .state import EmotionalState
-from .mind import make_mind, _label, appraisal_to_target
+from .mind import make_mind, _label, appraisal_to_target, _music_from
 from .morph import Expression
 from .inventor import Library, invent
 from .morphogen import Genome
@@ -640,7 +640,7 @@ class Being:
             "face": self._current_face(),
             "body_changed": body_changed,
             "wants_music": wants_music,
-            "music": phrase(decision.music),
+            "music": phrase(decision.music or _music_from({k: getattr(self.state, k) for k in SCAL})),
             "lyria": lyria_direction(self.state),
             "lyria_prompt": lp,
             "music_wish": (decision.music_wish or "") if wants_music else "",
