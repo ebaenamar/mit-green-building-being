@@ -462,7 +462,7 @@ class Being:
         if clip:
             self._style_i += 1
             self.expr.set_render(sundae.make_render(clip), f"sundae#{self._style_i}", dur=0.5)
-            self._hold_until = time.time() + max(8.0, 3 * sundae.duration(clip))
+            self._hold_until = time.time() + 60    # held while the mind thinks (re-armed below)
             self._back_to_self = True
             with self._lock:
                 self._glyph_name = "the Sundai sundae"
@@ -561,6 +561,8 @@ class Being:
         if built:
             body_changed = True                    # already showing the requested part; keep it
         elif self.express_mode == "glyph" and clip:            # the sundae is already playing
+            if clip is not True:                   # we started it this turn: ~9 s AFTER the reply
+                self._hold_until = time.time() + max(8.0, 3 * sundae.duration(clip))
             body_changed = False
         elif self.express_mode == "glyph" and req_emblem:      # they asked to see this exact thing
             self._express_emblem(req_emblem, "")
