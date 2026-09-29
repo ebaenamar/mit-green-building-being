@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Keeper</title>
+<style>
+:root{--bg:#0b0d12;--card:#141821;--ink:#e9edf4;--dim:#8b94a5;--line:#232a36;--on:#7ef0a8;--off:#ff8a8a;--btn:#1d2430}
+@media (prefers-color-scheme: light){:root:not([data-theme="dark"]){--bg:#f4f5f8;--card:#fff;--ink:#141821;--dim:#5b6475;--line:#dde1e8;--btn:#eef0f4;--on:#0f8a45;--off:#c0392b}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+main{max-width:420px;margin:0 auto;padding:28px 16px}
+h1{font-size:20px;margin:0 0 4px}p{color:var(--dim);margin:0 0 20px;font-size:14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:14px}
+label{font-size:13px;color:var(--dim)}input{width:100%;margin-top:6px;padding:12px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--ink);font-size:16px}
+.row{display:flex;gap:10px;margin-top:4px}button{flex:1;padding:14px;border-radius:12px;border:1px solid var(--line);background:var(--btn);color:var(--ink);font-size:16px;font-weight:600}
+button.wake{border-color:var(--on)}button.sleep{border-color:var(--off)}button:disabled{opacity:.5}
+#state{font-size:22px;font-weight:700}#state.on{color:var(--on)}#state.off{color:var(--off)}
+#msg{font-size:14px;color:var(--dim);min-height:1.4em;margin-top:10px}
+</style></head>
+<body><main>
+  <h1>The keeper's switch</h1>
+  <p>Wake the Green Building (the Sundai sundae plays, then its creature appears) or put it to sleep.</p>
+  <div class="card">
+    <label for="tok">Keeper key</label>
+    <input id="tok" type="password" autocomplete="current-password" placeholder="paste your admin key">
+  </div>
+  <div class="card">
+    <div id="state">—</div>
+    <div class="row" style="margin-top:14px">
+      <button class="wake" id="wake">Wake</button>
+      <button class="sleep" id="sleep">Sleep</button>
+    </div>
+    <div class="row" style="margin-top:10px"><button id="status">Status</button></div>
+    <div id="msg"></div>
+  </div>
+</main>
+<script>
+const $=s=>document.querySelector(s);
+try{ $('#tok').value=localStorage.getItem('gb_keeper')||''; }catch(e){}
+async function call(action){
+  const tok=$('#tok').value.trim(); if(!tok){ $('#msg').textContent='enter the key first'; return; }
+  try{ localStorage.setItem('gb_keeper',tok); }catch(e){}
+  document.querySelectorAll('button').forEach(b=>b.disabled=true); $('#msg').textContent='…';
+  try{
+    const r=await fetch('/api/admin/'+action,{method:'POST',headers:{'Content-Type':'application/json','X-Admin-Token':tok},body:'{}'});
+    const j=await r.json().catch(()=>({}));
+    if(r.status===401||r.status===403){ $('#msg').textContent='wrong key'; return; }
+    if(!r.ok){ $('#msg').textContent='error '+r.status+(j.error?': '+j.error:''); return; }
+    const on=!!j.awake; $('#state').textContent=on?'awake':'asleep'; $('#state').className=on?'on':'off';
+    $('#msg').textContent=j.note||'';
+  }catch(e){ $('#msg').textContent='network error'; }
+  finally{ document.querySelectorAll('button').forEach(b=>b.disabled=false); }
+}
+$('#wake').onclick=()=>call('wake'); $('#sleep').onclick=()=>call('sleep'); $('#status').onclick=()=>call('status');
+</script>
+</body></html>

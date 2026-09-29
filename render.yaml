@@ -35,3 +35,5 @@ services:
         sync: false
       - key: GLM_API_KEY          # Zhipu GLM-4.5-flash free fallback (never committed)
         sync: false
+      - key: ADMIN_TOKEN          # the keeper's private wake/sleep key (never committed)
+        sync: false

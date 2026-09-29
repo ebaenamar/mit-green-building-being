@@ -77,7 +77,7 @@ class Being:
     def __init__(self, display, mind=None, voice=None, state_path="", memory_path="",
                  fps=30, autonomy_period=7.0, time_of_day=0.5, express_mode="glyph",
                  library_path="", view_url="", on_event=None, city=None, genome_path="",
-                 transit=None, people_path=""):
+                 transit=None, people_path="", power_path=""):
         self.view_url = view_url
         self.on_event = on_event      # called with a dict when the being speaks to the group
         self.display = display
@@ -110,6 +110,10 @@ class Being:
         self.people = People(people_path)     # the people it knows (persist across restarts)
         self.building = BuildingBody()        # ITS BODY: the Green Building's floors & windows
         self._back_to_self = False            # after a held gesture, return to its creature self
+        # POWER: asleep until its keeper wakes it (private trigger). Remembered across restarts,
+        # so a crash mid-event wakes it again; first boot follows GB_START_ASLEEP (default awake).
+        self.power_path = power_path
+        self.awake = self._load_power()
         self._self_form = None                # the little creature it shows itself as, right now
         self._face_mode = ""                  # the face that creature is making (a reaction)
         self._face_until = 0.0
@@ -168,7 +172,10 @@ class Being:
             # the building; this is how it chooses to be seen)
             self._self_form = self._pick_self_form()
             clip = None if os.environ.get("GB_SPLASH", "").lower() in ("off", "0", "no") else splash.load_clip()
-            if clip:
+            if not self.awake:
+                self.expr.set_render(self._asleep_fn, "asleep#0")
+                nm = "asleep"
+            elif clip:
                 # every (re)start opens with the Sundai sundae, then it becomes its creature
                 self.expr.set_render(splash.make_render(clip), "splash#0")
                 # long enough to still be on when Render routes web traffic back (~12s after boot)
@@ -280,6 +287,11 @@ class Being:
         self.world.look(4.0)               # (world/face modes)
 
     def react(self, text: str, speaker: str = "") -> dict:
+        if not self.awake:
+            return self._asleep_reply()
+        return self._react_awake(text, speaker)
+
+    def _react_awake(self, text: str, speaker: str = "") -> dict:
         """Synchronously perceive -> interpret -> express, and return a rich reaction
         for a web client: sentiment, the being's voice, and music (synth + Lyria)."""
         from .music import phrase, lyria_direction, lyria_prompt
@@ -488,6 +500,7 @@ class Being:
         return {"sentiment": {k: round(getattr(self.state, k), 3) for k in SCAL},
                 "dominant": self.state.dominant_emotion, "glyph": self._display_name(self._glyph_name),
                 "face": self._current_face(),
+                "awake": self.awake,
                 "transforming": self.expr.transforming, "view_url": self.view_url,
                 "bpm": int(60 + self.state.arousal * 120),
                 "viewers": self.viewers,
@@ -541,7 +554,7 @@ class Being:
                 self.morph.save()                  # persist the evolving body periodically
             except Exception:
                 pass
-            if self.express_mode != "glyph" or self.expr.transforming:
+            if self.express_mode != "glyph" or self.expr.transforming or not self.awake:
                 continue
             if time.time() < self._hold_until:     # a requested/held form is on screen
                 continue
@@ -665,7 +678,7 @@ class Being:
                 if self._stop.is_set():
                     return
                 time.sleep(1)
-            if not self.on_event or random.random() > 0.55:
+            if not self.on_event or not self.awake or random.random() > 0.55:
                 continue                          # often it just keeps the thought to itself
             hint = self.people.someone_to_think_about() if random.random() < 0.4 else None
             try:
@@ -703,7 +716,7 @@ class Being:
     def _wake_line(self):
         """After a restart it WAKES (not born): one line remembering who it knows — web feed only."""
         time.sleep(10)
-        if not (self._woke_from_sleep and self.on_event and len(self.people)):
+        if not (self.awake and self._woke_from_sleep and self.on_event and len(self.people)):
             return
         names = ", ".join(self.people.known_names(3))
         hint = (f"you just woke up after being switched off for a while — your windows flicker back "
@@ -726,7 +739,7 @@ class Being:
                 if self._stop.is_set():
                     return
                 time.sleep(1)
-            if self.express_mode != "glyph":
+            if self.express_mode != "glyph" or not self.awake:
                 continue
             urge = self.drives.urge()
             if urge:
@@ -835,7 +848,7 @@ class Being:
                         self.building.tick(dt, self.state, self.viewers)
                     except Exception:
                         pass
-                    if self._back_to_self and now >= self._hold_until and not self.expr.transforming:
+                    if self.awake and self._back_to_self and now >= self._hold_until and not self.expr.transforming:
                         self._show_self(dur=1.8)
                     try:
                         self.drives.tick(dt)
@@ -852,7 +865,7 @@ class Being:
                         # the WHOLE facade carries mood (legible at 90 m): fill every window
                         # with a living mood field, then composite the face over it so the
                         # dead black background becomes a breathing, autonomous body.
-                        _raw = ("building", "splash")    # shown exactly as-is, no backdrop
+                        _raw = ("building", "splash", "asleep")    # shown as-is, no backdrop
                         on_bldg = (str(self.expr.cur_id).startswith(_raw) and
                                    (self.expr.tgt is None or str(self.expr.tgt_id).startswith(_raw)))
                         if on_bldg:
@@ -899,6 +912,9 @@ class Being:
                 pending, self._pending = self._pending, []
             due = (time.time() - last) >= self.autonomy_period
             if not pending and not due:
+                continue
+            if not self.awake:                    # asleep: no thinking, no spending
+                last = time.time()
                 continue
             last = time.time()
 
@@ -1063,6 +1079,74 @@ class Being:
         self.expr.set_render(fn, f"reactface#{self._style_i}", dur=0.45)  # snaps in = immediate
         self._hold_until = time.time() + 14
         self._back_to_self = True          # lingers so it's clearly a reaction to you
+
+    # -- power: asleep / awake (the keeper's private switch) ------------------------------
+    def _load_power(self) -> bool:
+        try:
+            import json as _json
+            with open(self.power_path) as fh:
+                return bool(_json.load(fh).get("awake", True))
+        except (OSError, ValueError, TypeError):
+            return os.environ.get("GB_START_ASLEEP", "").lower() not in ("1", "true", "yes", "on")
+
+    def _save_power(self):
+        from .jsonio import atomic_write
+        atomic_write(self.power_path, {"awake": self.awake, "at": time.time()})
+
+    def _asleep_fn(self, buf, t):
+        """Asleep, it just looks like the building at night: dark glass, a few faint lights."""
+        self.building.render(buf, t, self.state, None, self.city, self.transit, None, dim=0.3)
+
+    def wake(self, announce: bool = True) -> bool:
+        """Power on: the Sundai sundae plays, then its creature appears and it opens up."""
+        if self.awake:
+            return False
+        self.awake = True
+        self._save_power()
+        clip = None if os.environ.get("GB_SPLASH", "").lower() in ("off", "0", "no") else splash.load_clip()
+        if clip:
+            self.expr.set_render(splash.make_render(clip), f"splash#{time.time():.0f}", dur=1.2)
+            self._hold_until = time.time() + float(os.environ.get("GB_SPLASH_SECS", "18"))
+            self._back_to_self = True
+            self._glyph_name = "the Sundai sundae"
+        else:
+            self._show_self(dur=1.6)
+        self.drives.on_interaction(novelty=0.8, warmth=0.8)
+        if announce and self.on_event:
+            self.on_event({"who": "being", "proactive": True, "musing": True,
+                           "dominant": self.state.dominant_emotion,
+                           "text": "…lights on. I'm awake — come talk to me."})
+        return True
+
+    def sleep(self, announce: bool = True) -> bool:
+        """Power off: it says goodnight and its windows go dark. No LLM, no posts while asleep."""
+        if not self.awake:
+            return False
+        self.awake = False
+        self._save_power()
+        self._back_to_self = False
+        self._hold_until = 0.0
+        self._face_until = 0.0
+        self._fire_facade("withdraw", 3.0)
+        self.expr.set_render(self._asleep_fn, f"asleep#{time.time():.0f}", dur=2.5)
+        self._glyph_name = "asleep"
+        if announce and self.on_event:
+            self.on_event({"who": "being", "proactive": True, "musing": True,
+                           "dominant": self.state.dominant_emotion,
+                           "text": "goodnight, Cambridge. my windows are going dark."})
+        return True
+
+    def _asleep_reply(self) -> dict:
+        import random
+        line = random.choice(["zzz… the Green Building is asleep right now.",
+                              "(its windows are dark — the building is sleeping. come back soon.)",
+                              "zzz… mmh. not now. i'm asleep."])
+        return {"utterance": line, "invite_to_look": False,
+                "sentiment": {k: round(getattr(self.state, k), 3) for k in self._scalars},
+                "dominant": "asleep", "secondary": "", "feels": "", "thinks": "", "wants": "",
+                "glyph": "asleep", "face": "sleepy", "body_changed": False, "wants_music": False,
+                "music": {}, "lyria": {}, "lyria_prompt": "", "music_wish": "",
+                "source": "asleep", "reply_delay": 0.3, "view_url": self.view_url}
 
     def _pick_self_form(self, fresh: bool = False):
         """Which creature to be: often one of its favourites, else a fresh one it invents."""

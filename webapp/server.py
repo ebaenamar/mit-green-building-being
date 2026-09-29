@@ -94,10 +94,49 @@ BEING = Being(DISPLAY, mind=make_mind(prefer_llm=True), voice=None,
               genome_path=os.path.join(HERE, "..", "data", "web_morph.json"),
               state_path=os.path.join(HERE, "..", "data", "web_state.json"),   # wakes, not reborn
               people_path=os.path.join(HERE, "..", "data", "web_people.json"),
+              power_path=os.path.join(HERE, "..", "data", "web_power.json"),   # asleep/awake
               express_mode="glyph", view_url=VIEW, on_event=push, city=CITY, transit=TRANSIT,
               fps=int(os.environ.get("GB_FPS", "15")),   # lower fps frees the GIL for chat requests
               autonomy_period=float(os.environ.get("GB_AUTONOMY", "26")))
 threading.Thread(target=BEING.run, name="being", daemon=True).start()
+
+# ---- the keeper's private switch -----------------------------------------
+import hmac
+ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "").strip()
+_KEEPERS_PATH = os.path.join(HERE, "..", "data", "keepers.json")
+
+
+def _admin_ok(token: str) -> bool:
+    return bool(ADMIN_TOKEN) and hmac.compare_digest((token or "").strip(), ADMIN_TOKEN)
+
+
+def _load_keepers():
+    try:
+        with open(_KEEPERS_PATH) as fh:
+            return set(int(x) for x in json.load(fh))
+    except (OSError, ValueError, TypeError):
+        return set()
+
+
+KEEPERS = _load_keepers()
+
+
+def _save_keepers():
+    from being.jsonio import atomic_write
+    atomic_write(_KEEPERS_PATH, sorted(KEEPERS))
+
+
+def power(action: str) -> dict:
+    if action == "wake":
+        changed = BEING.wake()
+        note = "waking up — the Sundai sundae plays, then its creature appears" if changed else "already awake"
+    elif action == "sleep":
+        changed = BEING.sleep()
+        note = "going to sleep — windows going dark" if changed else "already asleep"
+    else:
+        note = ""
+    return {"awake": BEING.awake, "note": note}
+
 
 # ---- Telegram group channel (optional) -----------------------------------
 TG_TOKEN = os.environ.get("TELEGRAM_TOKEN", "").strip()
@@ -136,13 +175,42 @@ def tg_reply(chat, r):
             TG.send_audio(chat, base64.b64decode(a["b64"]), caption=r.get("music_wish") or "listen")
 
 
+_SLEEPY = {}
+
+
 def tg_handle(update):
     msg = update.get("message") or update.get("channel_post") or {}
     chat = (msg.get("chat") or {}).get("id")
     text = msg.get("text") or ""
     if not chat or not text:
         return
+    ctype = (msg.get("chat") or {}).get("type", "")
+    uid = (msg.get("from") or {}).get("id")
+    cmd = text.strip().split()[0].split("@")[0].lower() if text.strip() else ""
+    if cmd in ("/admin", "/wake", "/sleep", "/status"):
+        # the switch only works in a PRIVATE chat with the bot, for registered keepers
+        if ctype != "private":
+            return                                   # never react to switch commands in groups
+        if cmd == "/admin":
+            parts = text.split(maxsplit=1)
+            if len(parts) == 2 and _admin_ok(parts[1]):
+                KEEPERS.add(int(uid)); _save_keepers()
+                TG.send_message(chat, "you're a keeper of the lights now. /wake · /sleep · /status")
+            else:
+                TG.send_message(chat, "nope.")
+            return
+        if uid is None or int(uid) not in KEEPERS:
+            return
+        r = power(cmd[1:]) if cmd != "/status" else {"awake": BEING.awake, "note": ""}
+        TG.send_message(chat, ("awake" if r["awake"] else "asleep") + (f" — {r['note']}" if r["note"] else ""))
+        return
     CHATS.add(chat)
+    if not BEING.awake:                              # asleep: a sleepy word, not a flood
+        now = time.time()
+        if now - _SLEEPY.get(chat, 0) > 300:
+            _SLEEPY[chat] = now
+            TG.send_message(chat, BEING.react(text).get("utterance", "zzz…"))
+        return
     if text.startswith("/start"):
         TG.send_message(chat, "i am the MIT Green Building. talk to me — i won't obey, "
                               "i'll feel it, and i'll want you to watch me light up.")
@@ -227,6 +295,16 @@ class H(BaseHTTPRequestHandler):
         if self.path.split("?", 1)[0].split("#", 1)[0] in ("/", "/index.html"):   # ignore ?utm etc.
             with open(os.path.join(HERE, "index.html"), "rb") as fh:
                 return self._send(200, fh.read(), "text/html; charset=utf-8")
+        if self.path.split("?", 1)[0].rstrip("/") == "/admin":        # hidden, not linked anywhere
+            with open(os.path.join(HERE, "admin.html"), "rb") as fh:
+                b = fh.read()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(b)))
+            self.send_header("X-Robots-Tag", "noindex, nofollow")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            return self.wfile.write(b)
         if self.path.startswith("/api/frame"):
             try:
                 xff = self.headers.get("X-Forwarded-For", "")
@@ -260,6 +338,17 @@ class H(BaseHTTPRequestHandler):
             payload = json.loads(self.rfile.read(n) or b"{}")
         except ValueError:
             payload = {}
+        if self.path.startswith("/api/admin/"):
+            if not ADMIN_TOKEN:
+                return self._send(503, json.dumps({"error": "switch disabled: ADMIN_TOKEN not set"}))
+            tok = self.headers.get("X-Admin-Token", "") or str(payload.get("token", ""))
+            if not _admin_ok(tok):
+                time.sleep(0.8)                      # slow down guessing
+                return self._send(401, json.dumps({"error": "unauthorized"}))
+            action = self.path.split("/api/admin/", 1)[1].split("?", 1)[0].strip("/")
+            if action not in ("wake", "sleep", "status"):
+                return self._send(404, "{}")
+            return self._send(200, json.dumps(power(action)))
         # Fast path: the being reacts (mind only). Music is fetched separately so
         # the chat stays snappy while Lyria composes (~20s).
         if self.path.startswith("/api/chat"):
@@ -275,7 +364,8 @@ class H(BaseHTTPRequestHandler):
             return self._send(200, json.dumps(r))
         # Slow path: generate the Lyria clip for a prompt.
         if self.path.startswith("/api/music"):
-            audio = lyria.generate(payload.get("prompt", "")) if lyria.have_key() else None
+            audio = (lyria.generate(payload.get("prompt", ""))
+                     if (lyria.have_key() and BEING.awake) else None)
             out = {"audio": f"data:{audio['mime']};base64,{audio['b64']}"} if audio else {}
             return self._send(200, json.dumps(out))
         return self._send(404, "{}")

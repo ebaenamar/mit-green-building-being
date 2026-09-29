@@ -75,7 +75,7 @@
 
 <audio id="au"></audio>
 <script>
-function domLabel(d,g,f){d=d||'—';return (f&&f!=='neutral'&&f!==d)?d+' · face: '+f:d;}
+function domLabel(d,g,f){d=d||'—';if(d==='asleep')return 'asleep 💤';return (f&&f!=='neutral'&&f!==d)?d+' · face: '+f:d;}
 
 const $=s=>document.querySelector(s);
 const log=$('#log'), au=$('#au');
@@ -123,7 +123,7 @@ function drawBodyRAF(){
 
 async function refreshState(){
   try{const s=await (await fetch('/api/state')).json();
-    renderBars(s.sentiment); $('#dom').textContent=domLabel(s.dominant,s.glyph,s.face);
+    renderBars(s.sentiment); $('#dom').textContent=s.awake===false?'asleep 💤':domLabel(s.dominant,s.glyph,s.face);
     $('#glyph').textContent=s.glyph||'…'; $('#glyph2').textContent=s.glyph||'…';
     $('#xf').textContent=s.transforming?'· transforming…':'';
   }catch(e){}
