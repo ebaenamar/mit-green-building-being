@@ -460,14 +460,6 @@ class Being:
         clip = sundae.load_clip() if (self.express_mode == "glyph" and not built
                                       and sundae.mentioned(text)) else None
         if clip:
-            self._style_i += 1
-            self.expr.set_render(sundae.make_render(clip), f"sundae#{self._style_i}", dur=0.5)
-            self._hold_until = time.time() + 60    # held while the mind thinks (re-armed below)
-            self._back_to_self = True
-            with self._lock:
-                self._glyph_name = "the Sundai sundae"
-                self._body_since = time.time()
-                self._cur_spec, self._cur_learnable = None, False
             req_emblem = "the Sundai sundae"       # words must match: it's showing the sundae
         elif (not built and not req_emblem and time.time() < self._hold_until
               and str(self.expr.tgt_id or self.expr.cur_id).startswith("sundae")):
@@ -491,8 +483,8 @@ class Being:
         if built:
             self._will_show = f"a {pname}"
         elif clip:
-            self._will_show = ("the Sundai sundae — an animated ice-cream sundae, because they said "
-                               "ice cream")
+            self._will_show = ("a quick flash of the Sundai sundae (an ice-cream sundae, just for a "
+                               "second, because they said ice cream)")
         elif req_emblem:
             self._will_show = req_emblem
         else:
@@ -561,8 +553,15 @@ class Being:
         if built:
             body_changed = True                    # already showing the requested part; keep it
         elif self.express_mode == "glyph" and clip:            # the sundae is already playing
-            if clip is not True:                   # we started it this turn: ~9 s AFTER the reply
-                self._hold_until = time.time() + max(8.0, 3 * sundae.duration(clip))
+            if clip is not True:                   # a quick 2 s flash, right as its reply lands
+                self._style_i += 1
+                self.expr.set_render(sundae.make_render(clip), f"sundae#{self._style_i}", dur=0.3)
+                self._hold_until = time.time() + float(os.environ.get("GB_SUNDAE_SECS", "2"))
+                self._back_to_self = True
+                with self._lock:
+                    self._glyph_name = "the Sundai sundae"
+                    self._body_since = time.time()
+                    self._cur_spec, self._cur_learnable = None, False
             body_changed = False
         elif self.express_mode == "glyph" and req_emblem:      # they asked to see this exact thing
             self._express_emblem(req_emblem, "")

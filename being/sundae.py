@@ -1,6 +1,6 @@
 """Easter egg: say "ice cream" (in English) and the building shows the Sundai sundae — the
-animated clip from the Green Building simulator's demo — for a few seconds, then it goes back
-to being its creature. Only for that exact word; never on boot.
+animated clip from the Green Building simulator's demo — as a quick ~2 s flash (GB_SUNDAE_SECS)
+right as its reply lands, then it goes back to being its creature. Only for that exact word; never on boot.
 
 Clip format (same as the simulator's): b'C', fps (1 byte), n frames (uint16 LE), then n frames
 of 17x9 RGB bytes, row-major.
