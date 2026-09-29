@@ -29,7 +29,7 @@ from .morphogen import Genome
 from .drives import Drives
 from .people import People
 from .building_body import BuildingBody
-from . import emblem_registry, styled, gestures, anatomy, facade, cutegen
+from . import emblem_registry, styled, gestures, anatomy, facade, cutegen, sundae
 from .glyph import render_glyph, render_pixels
 
 
@@ -454,6 +454,22 @@ class Being:
         # image. Priority: a body part they asked for > an object they asked to see > an empathic
         # face reading how their message feels.
         req_emblem = self._requested_emblem(text) if (self.express_mode == "glyph" and not built) else ""
+        # easter egg: "ice cream" (English, exactly) -> the Sundai sundae plays on its windows
+        clip = sundae.load_clip() if (self.express_mode == "glyph" and not built
+                                      and sundae.mentioned(text)) else None
+        if clip:
+            self._style_i += 1
+            self.expr.set_render(sundae.make_render(clip), f"sundae#{self._style_i}", dur=0.5)
+            self._hold_until = time.time() + max(8.0, 3 * sundae.duration(clip))
+            self._back_to_self = True
+            with self._lock:
+                self._glyph_name = "the Sundai sundae"
+                self._body_since = time.time()
+                self._cur_spec, self._cur_learnable = None, False
+            req_emblem = "the Sundai sundae"       # words must match: it's showing the sundae
+        elif (not built and not req_emblem and time.time() < self._hold_until
+              and str(self.expr.tgt_id or self.expr.cur_id).startswith("sundae")):
+            clip = True                            # still playing: let it finish before reacting
         felt = None
         if not built and not req_emblem:
             vt, en = sens.valence_tone, sens.energy_tone
@@ -472,6 +488,9 @@ class Being:
             felt = self._crowd_face(room)          # the building wears the ROOM's face
         if built:
             self._will_show = f"a {pname}"
+        elif clip:
+            self._will_show = ("the Sundai sundae — an animated ice-cream sundae, because they said "
+                               "ice cream")
         elif req_emblem:
             self._will_show = req_emblem
         else:
@@ -539,6 +558,8 @@ class Being:
         # render EXACTLY what we told it it's showing (self._will_show), so words match image
         if built:
             body_changed = True                    # already showing the requested part; keep it
+        elif self.express_mode == "glyph" and clip:            # the sundae is already playing
+            body_changed = False
         elif self.express_mode == "glyph" and req_emblem:      # they asked to see this exact thing
             self._express_emblem(req_emblem, "")
             body_changed = False
@@ -1004,7 +1025,7 @@ class Being:
                         # the WHOLE facade carries mood (legible at 90 m): fill every window
                         # with a living mood field, then composite the face over it so the
                         # dead black background becomes a breathing, autonomous body.
-                        _raw = ("building", "lightson", "asleep")    # shown as-is, no backdrop
+                        _raw = ("building", "lightson", "asleep", "sundae")    # shown as-is, no backdrop
                         on_bldg = (str(self.expr.cur_id).startswith(_raw) and
                                    (self.expr.tgt is None or str(self.expr.tgt_id).startswith(_raw)))
                         if on_bldg:
