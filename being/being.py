@@ -28,7 +28,6 @@ from .morphogen import Genome
 from .drives import Drives
 from .people import People
 from .building_body import BuildingBody
-from . import splash
 from . import emblem_registry, styled, gestures, anatomy, facade, cutegen
 from .glyph import render_glyph, render_pixels
 
@@ -171,20 +170,12 @@ class Being:
             # it wakes up showing itself as a little creature on its own windows (its body is
             # the building; this is how it chooses to be seen)
             self._self_form = self._pick_self_form()
-            clip = None if os.environ.get("GB_SPLASH", "").lower() in ("off", "0", "no") else splash.load_clip()
             if not self.awake:
                 self.expr.set_render(self._asleep_fn, "asleep#0")
                 nm = "asleep"
-            elif clip:
-                # every (re)start opens with the Sundai sundae, then it becomes its creature
-                self.expr.set_render(splash.make_render(clip), "splash#0")
-                # long enough to still be on when Render routes web traffic back (~12s after boot)
-                self._hold_until = time.time() + float(os.environ.get("GB_SPLASH_SECS", "18"))
-                self._back_to_self = True
-                nm = "the Sundai sundae"
             else:
-                self.expr.set_render(self._creature_fn, "self#0")
-                nm = cutegen.describe(self._self_form)
+                # every (re)start: its windows light up floor by floor, then its creature appears
+                nm = self._lights_on(first=True)
             self._glyph_name = nm
             self._last_expr_dom = self.state.dominant_emotion
 
@@ -865,7 +856,7 @@ class Being:
                         # the WHOLE facade carries mood (legible at 90 m): fill every window
                         # with a living mood field, then composite the face over it so the
                         # dead black background becomes a breathing, autonomous body.
-                        _raw = ("building", "splash", "asleep")    # shown as-is, no backdrop
+                        _raw = ("building", "lightson", "asleep")    # shown as-is, no backdrop
                         on_bldg = (str(self.expr.cur_id).startswith(_raw) and
                                    (self.expr.tgt is None or str(self.expr.tgt_id).startswith(_raw)))
                         if on_bldg:
@@ -1098,19 +1089,12 @@ class Being:
         self.building.render(buf, t, self.state, None, self.city, self.transit, None, dim=0.3)
 
     def wake(self, announce: bool = True) -> bool:
-        """Power on: the Sundai sundae plays, then its creature appears and it opens up."""
+        """Power on: its windows light up floor by floor, then its creature appears."""
         if self.awake:
             return False
         self.awake = True
         self._save_power()
-        clip = None if os.environ.get("GB_SPLASH", "").lower() in ("off", "0", "no") else splash.load_clip()
-        if clip:
-            self.expr.set_render(splash.make_render(clip), f"splash#{time.time():.0f}", dur=1.2)
-            self._hold_until = time.time() + float(os.environ.get("GB_SPLASH_SECS", "18"))
-            self._back_to_self = True
-            self._glyph_name = "the Sundai sundae"
-        else:
-            self._show_self(dur=1.6)
+        self._lights_on()
         self.drives.on_interaction(novelty=0.8, warmth=0.8)
         if announce and self.on_event:
             self.on_event({"who": "being", "proactive": True, "musing": True,
@@ -1201,6 +1185,17 @@ class Being:
             self._cur_spec, self._cur_learnable = None, False
         self.expr.set_render(self._building_fn, f"building#{self._style_i}", dur=dur)
         self._back_to_self = False
+
+    def _lights_on(self, first: bool = False) -> str:
+        """Waking: its own facade blooms on from the middle floors outward, held a moment
+        (GB_WAKE_SECS, default 6), then it steps forward as its little creature."""
+        self._facade_event = ("bloom", time.time(), 3.5)
+        self.expr.set_render(self._building_fn, f"lightson#{time.time():.0f}",
+                             **({} if first else {"dur": 1.2}))
+        self._hold_until = time.time() + float(os.environ.get("GB_WAKE_SECS", "6"))
+        self._back_to_self = True
+        self._glyph_name = "its windows lighting up"
+        return self._glyph_name
 
     def _fire_facade(self, kind: str, dur: float = 2.5):
         """Trigger a transient, legible whole-facade gesture (bloom/withdraw/ripple/perk)."""

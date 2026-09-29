@@ -129,7 +129,7 @@ def _save_keepers():
 def power(action: str) -> dict:
     if action == "wake":
         changed = BEING.wake()
-        note = "waking up — the Sundai sundae plays, then its creature appears" if changed else "already awake"
+        note = "waking up — its windows light up, then its creature appears" if changed else "already awake"
     elif action == "sleep":
         changed = BEING.sleep()
         note = "going to sleep — windows going dark" if changed else "already asleep"
