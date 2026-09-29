@@ -73,9 +73,9 @@ FACE_MODE = {
 }
 
 
-_MUSIC_WORDS = ("music", "song", "sing", "play me", "play a", "play something", "tune", "beat",
-                "melod", "canción", "cancion", "música", "musica", "suena", "tócame", "tocame",
-                "toca ", "cántame", "cantame", "canta ")
+_MUSIC_WORDS = ("music", "song", "sing", "play me", "play a", "play something", "play us", "tune",
+                "beat", "melod", "canción", "cancion", "música", "musica", "suena", "tócame",
+                "tocame", "toca ", "tocas ", "canta", "cántame", "cánta", "ponme algo", "pon algo")
 
 
 def _asks_music(text: str) -> bool:
