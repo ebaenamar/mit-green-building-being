@@ -12,6 +12,8 @@ Env:
   GB_INSTANCE     reuse an existing instance name
   GB_BASE         sim API base (default https://sundai.willsarg.com/api)
   PORT            default 8010
+  HOST            interface to listen on (default 0.0.0.0; use 127.0.0.1 so only this
+                  computer can reach it)
 """
 import base64
 import json
@@ -395,7 +397,7 @@ def main():
     signal.signal(signal.SIGTERM, _graceful)
     ThreadingHTTPServer.request_queue_size = 256
     ThreadingHTTPServer.daemon_threads = True
-    srv = ThreadingHTTPServer(("0.0.0.0", port), H)
+    srv = ThreadingHTTPServer((os.environ.get("HOST", "0.0.0.0"), port), H)
     srv.serve_forever()
 
 
