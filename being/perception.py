@@ -6,6 +6,7 @@ intensity, a tone, a novelty. The mind decides what, if anything, to do with it.
 from __future__ import annotations
 import re
 import time
+import unicodedata
 from dataclasses import dataclass, field
 
 _POS = set(("love like joy happy warm gentle beautiful calm peace kind hello hi friend "
@@ -14,7 +15,11 @@ _POS = set(("love like joy happy warm gentle beautiful calm peace kind hello hi 
             # español
             "amor amo quiero feliz contento contenta alegre alegria gracias bonito linda "
             "lindo hermoso hermosa genial increible bien bueno buena abrazo cariño hola "
-            "encanta guay chulo maravilloso").split())
+            "encanta guay chulo maravilloso "
+            "adorable cute fun funny cool awesome excited proud congrats yay nice lovely perfect "
+            "best haha lol graduated passed "
+            "jaja jeje divertido divertida guapo guapa mola felicidades orgulloso orgullosa "
+            "gradue graduado graduada aprobe emocionado emocionada precioso preciosa").split())
 # NOTE: "no"/"stop"/"help"/"careful" removed — ubiquitous (esp. Spanish "no"), not sadness
 _NEG = set(("hate angry fear dark cold cruel sad lonely alone pain hurt bad "
             "afraid scared tired sick death die empty lost broken danger chasing chase "
@@ -24,7 +29,9 @@ _NEG = set(("hate angry fear dark cold cruel sad lonely alone pain hurt bad "
             "muerto cansado cansada enfermo enferma perdido perdida roto rota adios harto "
             "harta asustado asustada asusta susto preocupado preocupada vacio vacia solo "
             "nervioso nerviosa ansioso ansiosa estresado estresada agobiado agobiada "
-            "nervous anxious stressed worried overwhelmed").split())
+            "nervous anxious stressed worried overwhelmed "
+            "failed fail cry crying sucks awful terrible worst miserable depressed heartbroken "
+            "suspendi fatal llorando deprimido deprimida horrible fatal agotado agotada").split())
 _HIGH = set(("run fast now loud jump fight chase chasing burn explode wild storm scream "
              "chaos dance quick hurry go energy danger voices shout many attack play "
              # español
@@ -35,6 +42,15 @@ _LOW = set(("slow quiet rest sleep still hush whisper calm gentle drift float wa
             # español
             "lento quieto duerme calma suave frio vacio oscuro cansado triste solo "
             "silencio descansa").split())
+
+
+def _fold(w: str) -> str:
+    """'alegría' -> 'alegria', 'cariño' -> 'carino': accents never hide a feeling."""
+    return "".join(c for c in unicodedata.normalize("NFD", w) if unicodedata.category(c) != "Mn")
+
+
+_POS, _NEG, _HIGH, _LOW = ({_fold(w) for w in S} for S in (_POS, _NEG, _HIGH, _LOW))
+
 # words that pull attention toward the unknown, and words that signal a sensory din
 _CURIO = set(("wonder hidden secret mystery what why how explore inside discover unknown "
               "curious question strange").split())
@@ -70,7 +86,7 @@ class Perceiver:
 
     def perceive(self, raw: str, kind: str = "text") -> Sensation:
         text = raw.strip()
-        words = re.findall(r"[a-zA-Z']+", text.lower())
+        words = re.findall(r"[a-z']+", _fold(text.lower()))
         wl = len(words)
 
         exclaim = text.count("!")

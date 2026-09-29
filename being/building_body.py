@@ -91,6 +91,12 @@ class BuildingBody:
         if random.random() < dt * (0.3 + 3.0 * max(0.0, cu - 0.45)):
             self._blink[random.randrange(ROWS), random.randrange(COLS)] = 1.0
 
+    def ping(self, n: int = 1):
+        """A message arrived in a crowd: one window winks — 'I felt yours' — without the
+        whole body flipping. With dozens writing, the facade twinkles like a busy building."""
+        for _ in range(max(1, n)):
+            self._blink[random.randrange(ROWS), random.randrange(COLS)] = 1.0
+
     def focus_floor(self, floor: int, secs: float = 9.0) -> bool:
         r = floor_to_row(floor)
         if r is None:

@@ -539,6 +539,8 @@ class LlmMind:
         if ctx.get("avoid"):
             bodyline += (f"Your last lines were: {ctx['avoid']} — do NOT reuse their shape, "
                          "rhythm, length, or phrasing. Sound noticeably different this time.\n")
+        if ctx.get("room"):
+            bodyline += f"THE ROOM: {ctx['room']}\n"
         if ctx.get("music"):
             bodyline += f"MUSIC NOW: {ctx['music']}\n"
         if ctx.get("making"):

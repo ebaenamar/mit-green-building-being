@@ -138,6 +138,14 @@ class Being:
         self._self_form = None                # the little creature it shows itself as, right now
         self._face_mode = ""                  # the face that creature is making (a reaction)
         self._face_until = 0.0
+        # THE ROOM: with many people writing, its body shows the crowd's feeling (integrated
+        # over the last GB_ROOM_SECS), not whoever typed last; each person still gets a
+        # personal reply in words, and a single window winks for their message.
+        self._room = []                       # (t, speaker, valence_tone, felt)
+        self._room_secs = float(os.environ.get("GB_ROOM_SECS", "60"))
+        self._crowd_min = int(os.environ.get("GB_CROWD_MIN", "3"))
+        self._room_face, self._room_face_since = "", 0.0
+        self._room_now = {}
         self._person_brief = ""               # what it knows about whoever is talking now
         self._spark = 0.0
         self._glyph_name = ""
@@ -258,6 +266,14 @@ class Being:
                           f"your display every reply — mostly just talk. But IF you mention what "
                           f"you're showing, it MUST be exactly '{showing}' — never invent a different "
                           f"shape and never say an internal code.")
+        if self._room_now:
+            r = self._room_now
+            ctx["room"] = (f"{r['people']} people are talking to you at once right now (last minute). "
+                           f"The room feels: {self._room_line(r)}. With this many, the face on your "
+                           f"windows is the ROOM's face ('{self._room_face}'), not one person's — you "
+                           f"feel the whole crowd. Still answer THIS person personally and briefly; if "
+                           f"they feel different from the room (sad while the room is happy), meet them "
+                           f"gently in words. Now and then you may notice the crowd itself.")
         if getattr(self, "_music_asked", False):
             spec, face, shown = self._sound_subject()
             ctx["music"] = (f"They asked for music, and you ARE playing them a short piece right now "
@@ -280,6 +296,68 @@ class Being:
             except Exception:
                 pass
         return ctx
+
+    # -- the room: many people at once ---------------------------------------------------
+    def _room_add(self, speaker, valence_tone, felt):
+        with self._lock:
+            self._room.append((time.time(), speaker or "someone", float(valence_tone), felt))
+            self._room = self._room[-400:]
+
+    def _room_read(self, peek_speaker: str = "") -> dict:
+        """Who's in the room right now and how it feels (recent messages weigh more)."""
+        now = time.time()
+        with self._lock:
+            self._room = [r for r in self._room if now - r[0] <= self._room_secs]
+            rows = list(self._room)
+        people = {r[1] for r in rows}
+        if peek_speaker:
+            people.add(peek_speaker)
+        faces, wsum, vsum = {}, 0.0, 0.0
+        for t, _sp, v, f in rows:
+            w = 0.5 ** ((now - t) / 20.0)          # the last ~20 s count most
+            faces[f] = faces.get(f, 0.0) + w
+            wsum += w
+            vsum += w * v
+        counts = {}
+        for _t, _sp, _v, f in rows:
+            counts[f] = counts.get(f, 0) + 1
+        return {"people": len(people), "msgs": len(rows), "faces": faces, "counts": counts,
+                "valence": (vsum / wsum) if wsum else 0.5}
+
+    def _crowd_face(self, room) -> str:
+        """The room's face, with a little patience: it changes only when a clear majority has
+        shifted and the current face has been up at least ~8 s — so dozens of messages read
+        as one crowd feeling, not a flickering slot machine."""
+        faces = dict(room["faces"])
+        total = sum(faces.values()) or 1.0
+        feelingful = {f: w for f, w in faces.items() if f != "neutral"}
+        if feelingful:
+            cand, w = max(feelingful.items(), key=lambda kv: kv[1])
+            share = w / total
+        else:
+            cand, share = "curious", 1.0
+        if share < 0.34:                           # a mixed room: it's taking you all in
+            cand = "curious"
+        now = time.time()
+        cur = self._room_face
+        if not cur or (cand != cur and now - self._room_face_since >= 8.0 and share >= 0.4) \
+                or (cand != cur and now - self._room_face_since >= 20.0):
+            self._room_face, self._room_face_since = cand, now
+        return self._room_face
+
+    def _room_snapshot(self) -> dict:
+        r = self._room_read()
+        if r["people"] < self._crowd_min:
+            return {"people": r["people"]}
+        return {"people": r["people"], "face": self._room_face, "feel": self._room_line(r)}
+
+    def _room_line(self, room) -> str:
+        c = room.get("counts", {})
+        order = sorted(((n, f) for f, n in c.items()), reverse=True)
+        words = {"happy": "happy", "sad": "sad", "angry": "upset", "surprised": "excited",
+                 "neutral": "just curious / saying hi"}
+        parts = [f"{words.get(f, f)} ({n})" for n, f in order[:3]]
+        return ", ".join(parts)
 
     def _sound_subject(self):
         """(creature spec or None, face, other-thing-shown) — what the music should be OF."""
@@ -338,10 +416,16 @@ class Being:
             self._convo.append(f"{speaker or 'someone'}: {text}")
             self._convo = self._convo[-12:]
             convo = list(self._convo)
-        self._spark = 1.0
         self.world.flash(); self.world.look(4.0)
         # presence: if it's been alone a while, it perks up harder when someone returns
         self._returned = self.drives.alone_seconds() > 90
+        room = self._room_read(peek_speaker=speaker)
+        crowd = room["people"] >= self._crowd_min
+        if crowd:
+            self._spark = max(self._spark, 0.25)   # no strobe: dozens of messages would flash it
+            self.building.ping()                   # one window winks for this person
+        else:
+            self._spark = 1.0
         if self._returned:
             self._spark = 1.3
             self._fire_facade("perk", 1.6)          # the whole facade brightens: it noticed you
@@ -379,6 +463,13 @@ class Being:
                 felt = "happy"
             elif en > 0.80:
                 felt = "surprised"
+        self._room_add(speaker, sens.valence_tone, felt or "neutral")
+        room = self._room_read()
+        crowd = room["people"] >= self._crowd_min
+        self._room_now = room if crowd else {}
+        own_felt = felt                            # how THIS person's message feels
+        if crowd and not built and not req_emblem:
+            felt = self._crowd_face(room)          # the building wears the ROOM's face
         if built:
             self._will_show = f"a {pname}"
         elif req_emblem:
@@ -399,7 +490,7 @@ class Being:
         self._mode_hint = self._len_hint = ""
         self._person_brief = ""
         try:
-            self.people.seen(speaker, text, felt or "")        # now it knows them a bit better
+            self.people.seen(speaker, text, own_felt or "")        # now it knows them a bit better
         except Exception:
             pass
         # when it just built a body part, make sure it SAYS what it assembled (the reflex
@@ -423,15 +514,20 @@ class Being:
             # gently nudge the persistent mood — one voice in a crowd, weighted by how
             # strong it is. The mood is inertial; it won't flip from a single message.
             if target:
-                rate = min(0.6, self._react_rate * (0.6 + sens.intensity))
+                # in a crowd each voice counts less (~1/sqrt(people)): the room is integrated,
+                # so 30 people move it as a crowd, and nobody can yank it alone
+                share = 1.0 / math.sqrt(max(1, self._room_now.get("people", 1)))
+                rate = min(0.6, self._react_rate * (0.6 + sens.intensity)) * share
                 self.state.approach(target, rate=rate, set_labels=False)
+            else:
+                share = 1.0
             # the face/facade track THIS message: the LLM's chosen expression nudges mood now
             em = EXPRESSIONS.get(decision.expression)
             if em:
-                self.state.nudge(valence=(em[0] - self.state.valence) * 0.5,
-                                 arousal=(em[1] - self.state.arousal) * 0.5)
+                self.state.nudge(valence=(em[0] - self.state.valence) * 0.5 * share,
+                                 arousal=(em[1] - self.state.arousal) * 0.5 * share)
             self._relabel()
-        if em and em[2]:
+        if em and em[2] and not self._room_now:     # in a crowd, no whole-facade gesture per line
             self._fire_facade(em[2], 2.0)
         # The body changes only if that nudge actually tipped the being into a new mood;
         # otherwise it just answers with words and keeps the body it already wears.
@@ -462,7 +558,8 @@ class Being:
             body_changed = False
         elif self.express_mode == "glyph":
             # DEFAULT: the empathic face reads how their message feels, held so it's a reaction.
-            self._face_mode = felt or CREATURE_MODE.get(decision.expression) or anatomy._mode(self.state)
+            self._face_mode = (felt if self._room_now else
+                               felt or CREATURE_MODE.get(decision.expression) or anatomy._mode(self.state))
             self._face_until = time.time() + 14
             if not str(self.expr.cur_id).startswith("self"):
                 self._show_self(dur=0.5)
@@ -548,6 +645,7 @@ class Being:
                 "repertoire": len(self.library),
                 "favorites": len(self.library.favorites),
                 "knows_people": len(self.people),
+                "room": self._room_snapshot(),
                 "morphology": self.morph.summary(),
                 "drives": self.drives.summary()}
 

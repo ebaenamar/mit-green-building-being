@@ -123,7 +123,7 @@ function drawBodyRAF(){
 
 async function refreshState(){
   try{const s=await (await fetch('/api/state')).json();
-    renderBars(s.sentiment); $('#dom').textContent=s.awake===false?'asleep 💤':domLabel(s.dominant,s.glyph,s.face);
+    renderBars(s.sentiment); $('#dom').textContent=s.awake===false?'asleep 💤':domLabel(s.dominant,s.glyph,s.face)+(s.room&&s.room.face?' · the room ('+s.room.people+'): '+s.room.face:'');
     $('#glyph').textContent=s.glyph||'…'; $('#glyph2').textContent=s.glyph||'…';
     $('#xf').textContent=s.transforming?'· transforming…':'';
   }catch(e){}
