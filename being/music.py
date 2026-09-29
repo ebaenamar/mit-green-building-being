@@ -108,3 +108,51 @@ def lyria_prompt(state) -> str:
     bright = "bright and airy" if c["brightness"] > 0.55 else "dark and muted"
     return (f"{words}. {mood} mood, {bright}, {key}, around {c['bpm']} bpm, "
             f"instrumental, expressive, ~20 seconds.")
+
+
+# --- the sound of ITSELF: what's on its windows + the face it's making -----------------------
+# Music is not a playlist: it's the creature it's being right now, heard. Each part of the image
+# maps to a musical trait, so a sad lavender ghost and a happy peach bunny sound different.
+_KIND_SOUND = {
+    "blob":  "round squishy bass, wobbly soft synth",
+    "cat":   "sly pizzicato strings, brushed snare, a little swing",
+    "bunny": "hopping staccato, skipping rhythm, toy piano",
+    "ghost": "floating airy choir, soft theremin, lots of reverb",
+    "drop":  "dripping kalimba, watery echoes",
+}
+_COLOR_SOUND = {
+    "mint": "fresh glassy tones", "sky": "open airy pads", "lavender": "dreamy hazy chords",
+    "peach": "warm fuzzy tape tone", "rose": "tender soft strings", "butter": "sunny ukulele",
+    "bubblegum": "sugary bright synths", "aqua": "cool shimmering bells",
+}
+_ACCENT_SOUND = {"sparkle": "tiny glockenspiel sparkles", "star": "a twinkling star-like motif",
+                 "heart": "a heartbeat kick", "flower": "flute trills", "bow": "music-box chimes"}
+_FACE_SOUND = {
+    "happy": "smiling major-key melody", "love": "tender, affectionate melody",
+    "playful": "cheeky bouncy melody", "sad": "slow minor melody, like a tear falling",
+    "angry": "stomping low toms, gritty and tense", "surprised": "sudden bright stab, then wonder",
+    "curious": "questioning unresolved melody", "sleepy": "slow lullaby, drowsy and soft",
+    "neutral": "calm steady melody",
+}
+
+
+def sound_of(spec, face: str = "", shown: str = "") -> str:
+    """Words for what its current image SOUNDS like (the creature's kind, colour, charm, face).
+    If it's showing something else (an emblem, a drawing), that thing becomes the theme."""
+    feel = _FACE_SOUND.get(face or "", "")            # the face it's making leads the melody
+    if spec and not shown:
+        timbre = ", ".join(p for p in (_KIND_SOUND.get(spec.get("kind", ""), ""),
+                                       _COLOR_SOUND.get(spec.get("body", ""), ""),
+                                       _ACCENT_SOUND.get(spec.get("accent", ""), "")) if p)
+    else:
+        timbre = f"a musical portrait of {shown}" if shown else ""
+    if feel and timbre:
+        return f"{feel}, played with {timbre}"
+    return feel or timbre
+
+
+def lyria_prompt_for(state, spec=None, face: str = "", shown: str = "") -> str:
+    """Lyria prompt = how it FEELS (mood, arousal, valence) + what it LOOKS like right now."""
+    img = sound_of(spec, face, shown)
+    base = lyria_prompt(state)
+    return f"{img}. {base}" if img else base

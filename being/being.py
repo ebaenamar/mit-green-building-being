@@ -12,6 +12,7 @@ from __future__ import annotations
 import math
 import os
 import threading
+import re
 import time
 
 import numpy as np
@@ -70,6 +71,27 @@ FACE_MODE = {
     "surprised": "surprised", "sad": "sad", "angry": "angry", "suspicious": "angry",
     "sleepy": "sleepy", "neutral": "neutral",
 }
+
+
+_MUSIC_WORDS = ("music", "song", "sing", "play me", "play a", "play something", "tune", "beat",
+                "melod", "canción", "cancion", "música", "musica", "suena", "tócame", "tocame",
+                "toca ", "cántame", "cantame", "canta ")
+
+
+def _asks_music(text: str) -> bool:
+    t = (text or "").lower()
+    return any(w in t for w in _MUSIC_WORDS)
+
+
+_REFUSES_MUSIC = re.compile(r"jukebox|can'?t (?:play|sing)|cannot (?:play|sing)|no music|not (?:a|your) "
+                            r"(?:dj|radio|playlist)|won'?t (?:play|sing)|hum it|no (?:puedo|sé) "
+                            r"(?:cantar|tocar)|sin m[uú]sica", re.I)
+_PLAYING_LINES = [
+    "here — this is {s}. listen.",
+    "okay. this is what i sound like right now: {s}.",
+    "i'm playing you {s}. it's the truest thing i've got.",
+    "listen — {s}. that's me, out loud.",
+]
 
 
 class Being:
@@ -236,6 +258,13 @@ class Being:
                           f"your display every reply — mostly just talk. But IF you mention what "
                           f"you're showing, it MUST be exactly '{showing}' — never invent a different "
                           f"shape and never say an internal code.")
+        if getattr(self, "_music_asked", False):
+            spec, face, shown = self._sound_subject()
+            ctx["music"] = (f"They asked for music, and you ARE playing them a short piece right now "
+                            f"(it reaches them in a few seconds). It is {self._sound_line()} — the "
+                            f"sound of the creature on your windows and of what you feel. Mention it "
+                            f"in your own voice, briefly: what it sounds like or why it feels like "
+                            f"this. Never refuse, never say you can't, never 'here's a song'.")
         if self._making:
             ctx["making"] = (f"You are BUILDING a {self._making['name']} on your body right now, "
                              f"from scratch. It's made of {self._making['needs']}. Say what you're "
@@ -252,11 +281,27 @@ class Being:
                 pass
         return ctx
 
+    def _sound_subject(self):
+        """(creature spec or None, face, other-thing-shown) — what the music should be OF."""
+        if str(self.expr.cur_id).startswith(("self", "lightson")) or str(self.expr.tgt_id or "").startswith("self"):
+            return self._self_form or {}, self._current_face(), ""
+        return None, self._current_face(), self._showing()
+
+    def _sound_line(self) -> str:
+        """A few plain words for what this piece is: 'a peach bunny, happy' — shown with the music."""
+        spec, face, shown = self._sound_subject()
+        who = shown or cutegen.describe(spec or {})
+        dom = self.state.dominant_emotion
+        if face and face not in ("neutral", dom) and not shown:
+            return f"the sound of {who} — {face} on the outside, {dom} underneath"
+        return f"the sound of {who}, feeling {dom}"
+
     def _lyria_prompt(self) -> str:
-        """The Lyria text prompt for how it feels, tinted obliquely by the city's residue
-        (an afternoon of rain surfacing later as something peculiar)."""
-        from .music import lyria_prompt
-        p = lyria_prompt(self.state)
+        """The Lyria text prompt: the sound of the creature it's showing + how it feels right now,
+        tinted obliquely by the city's residue (an afternoon of rain surfacing later)."""
+        from .music import lyria_prompt_for
+        spec, face, shown = self._sound_subject()
+        p = lyria_prompt_for(self.state, spec, face, shown)
         if self.city:
             try:
                 p = self.city.color_prompt(p)
@@ -343,12 +388,14 @@ class Being:
             self._will_show = (f"yourself as {me}, making a {felt} face" if felt
                                else f"yourself as {me}")
 
+        self._music_asked = _asks_music(text)
         self._person_brief = self.people.brief(speaker)   # does it know this person?
         self._mode_hint = self._pick_mode()        # force a fresh response shape this turn
         self._len_hint = self._pick_length()       # and a fresh length, so replies breathe
         decision = self.mind.interpret(self.state, [sens], self.memory,
                                        speaker=speaker, convo=convo, context=self._context())
         self._making = None
+        music_req, self._music_asked = self._music_asked, False
         self._mode_hint = self._len_hint = ""
         self._person_brief = ""
         try:
@@ -439,9 +486,6 @@ class Being:
         if decision.music_wish:
             lp = decision.music_wish + " — " + lp
         import random
-        music_req = any(w in text.lower() for w in (
-            "music", "song", "sing", "play me", "play a", "tune", "beat", "melod",
-            "canción", "cancion", "música", "musica", "suena", "tócame", "tocame", "toca "))
         # ration music: on explicit request always; otherwise only on a genuine shift, past a
         # cooldown, and not even every time — so it's an event, not a tic on every line.
         now = time.time()
@@ -455,6 +499,12 @@ class Being:
             self.drives.on_transform()
         if not wants_music:                 # don't surface a music offer at all this turn
             lp = ""
+        elif music_req and (_REFUSES_MUSIC.search(decision.utterance or "")
+                            or str(decision.source).startswith("reflex")):
+            # it never says "no music" while the music is actually playing
+            decision.utterance = random.choice(_PLAYING_LINES).format(s=self._sound_line())
+        if wants_music and not decision.music_wish:
+            decision.music_wish = self._sound_line()
         # human cadence, kept SNAPPY (many people waiting): quick when roused, a touch slower calm
         delay = 0.3 + 1.0 * (1 - self.state.arousal)
         return {
@@ -769,7 +819,7 @@ class Being:
             line = self._drive_line("expression")
             if self.on_event:
                 self.on_event({"who": "being", "text": line or "hold on — i want to play something.",
-                               "proactive": True, "genuine": True, "music_wish": "",
+                               "proactive": True, "genuine": True, "music_wish": self._sound_line(),
                                "dominant": self.state.dominant_emotion,
                                "lyria_prompt": self._lyria_prompt()})
 
@@ -1274,7 +1324,7 @@ class Being:
             try:
                 self.on_event({"who": "being", "text": utter, "emblem": name,
                                "invite": self._gate_invite(decision.invite_to_look if decision else False),
-                               "music_wish": (decision.music_wish if decision else "") or "",
+                               "music_wish": (decision.music_wish if decision else "") or self._sound_line(),
                                "dominant": dom, "proactive": True, "genuine": True,
                                "lyria_prompt": self._lyria_prompt()})
             except Exception:
