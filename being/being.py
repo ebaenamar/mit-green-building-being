@@ -73,14 +73,16 @@ FACE_MODE = {
 }
 
 
-_MUSIC_WORDS = ("music", "song", "sing", "play me", "play a", "play something", "play us", "tune",
-                "beat", "melod", "canción", "cancion", "música", "musica", "suena", "tócame",
-                "tocame", "toca ", "tocas ", "canta", "cántame", "cánta", "ponme algo", "pon algo")
+# whole words only ("me encanta" is not "canta", "suena bien" is not a request)
+_MUSIC_RE = re.compile(r"\b(?:music|musica|song|songs|sing|singing|tune|tunes|melody|beat|beats|"
+                       r"cancion|canciones|canta|cantas|cantame|cantar|toca|tocas|tocame|tocar)\b|"
+                       r"\bplay (?:me|us|a|some|something)\b|\bpon(?:me|nos)? algo\b|"
+                       r"\bsuena algo\b")
 
 
 def _asks_music(text: str) -> bool:
-    t = (text or "").lower()
-    return any(w in t for w in _MUSIC_WORDS)
+    from .perception import _fold
+    return bool(_MUSIC_RE.search(_fold((text or "").lower())))
 
 
 _REFUSES_MUSIC = re.compile(r"jukebox|can'?t (?:play|sing)|cannot (?:play|sing)|no music|not (?:a|your) "
@@ -919,6 +921,9 @@ class Being:
                                "reaching_out": True, "dominant": self.state.dominant_emotion})
         elif urge == "stimulation":                # bored -> amuse itself by making a cute one
             self._fire_facade("ripple", 2.5)        # a sweep of light across the windows
+            if time.time() < self._hold_until:      # something requested is on screen: let it be
+                self.drives.on_transform()
+                return
             try:
                 spec = cutegen.generate(self.state, self.morph)
                 sc = cutegen.score(spec, self.state, self.morph)
